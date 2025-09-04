@@ -3,6 +3,8 @@
  
  This repo is for backup purpose and Learning not for prod. use...
  
- 16bits bootloader and kernel.
+ 16bits bootloader and kernel (simple terminal and file system).  (as is)
 
- 64bits bootloader and simple kernel to show boot process...
+ 32bits  bootloader and kernel (...On Concanating....)
+
+ 64bits bootloader and simple kernel to show boot process...  (More content on the ways...)
