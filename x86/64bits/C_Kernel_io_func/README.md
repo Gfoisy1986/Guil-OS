@@ -41,7 +41,7 @@ Setup and Build Instructions
 Install tools:
 
 sudo apt-get install nasm qemu-system-x86 make
-# Note: You may need to build a cross-compiler (gcc for x86_64-elf) if it's not available in your repositories.
+
 
 Compile the C files and assemble the assembly file:
 
