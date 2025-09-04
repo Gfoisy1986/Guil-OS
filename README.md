@@ -15,13 +15,11 @@
 
 
  ### On the workbench
-
-  - Priority 1 to 10.
  
-  - 10 -Working on making Free basic course with each chapter actualy limited to X86...
+  - Working on making Free basic course with each chapter actualy limited to X86...
  
-  - 9 -Working on making Docs to create Custom (Shell, Bash, Makefile, linker.ld and more...) Files.
+  - Working on making Docs to create Custom (Shell, Bash, Makefile, linker.ld and more...) Files.
 
-  - 1 -X86_32bits  bootloader and kernel (as is) incomplete or not tested...
+  - X86_32bits  bootloader and kernel (as is) incomplete or not tested...
 
-  - 2 -X86_64bits bootloader and simple kernel to show boot process incomplete...  C Kernel Version on testbench incomplete...(More content on the ways...)
+  - X86_64bits bootloader and simple kernel to show boot process incomplete...  C Kernel Version on testbench incomplete...(More content on the ways...)
