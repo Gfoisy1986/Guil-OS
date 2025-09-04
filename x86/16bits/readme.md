@@ -1,7 +1,11 @@
 16-bit Bootloader with Simple Terminal and File System
+
 This project is a basic 16-bit bootloader written in x86 assembly. It includes a simple command-line terminal and a minimal file storage system.
 
+
+
 Overview
+
 boot.asm: The initial 512-byte boot sector that is loaded by the BIOS. Its primary role is to set up the environment and load the main kernel from the disk.
 
 kernel.asm: The main part of the "operating system." It contains the terminal logic, command interpreter, and file system functions.
@@ -12,7 +16,10 @@ The file table contains entries for each file, including its name, size, and sta
 
 File data is stored in the sectors following the file table.
 
+
+
 Compiling and Running
+
 You will need the following tools:
 
 NASM (Netwide Assembler): To assemble the .asm files.
@@ -24,6 +31,7 @@ Step 1: Assemble the files
 Open a terminal and run the following commands to assemble the bootloader and kernel.
 
 nasm -f bin boot.asm -o boot.bin
+
 nasm -f bin kernel.asm -o kernel.bin
 
 Step 2: Create a disk image
@@ -38,7 +46,12 @@ This command will boot the disk.img in a virtual machine.
 
 qemu-system-x86_64 disk.img
 
+
+
+
 Creating a Bootable ISO
+
+
 To create a bootable ISO file, you will need the genisoimage or xorriso tool. The xorriso tool is generally recommended as it is more modern.
 
 Install the ISO Creation Tool
@@ -51,6 +64,8 @@ Create a new directory to hold the files that will be placed on the ISO. This is
 
 mkdir iso_root
 cp disk.img iso_root/
+
+
 
 Generate the Bootable ISO Image
 
@@ -73,7 +88,12 @@ You can now test the ISO image with QEMU:
 
 qemu-system-x86_64 -cdrom bootloader.iso
 
+
+
+
 Supported Commands
+
+
 Once the bootloader loads and the terminal appears, you can use the following commands:
 
 help: Displays the available commands.
