@@ -1,2 +1,6 @@
 # Guil-OS
  Bare-Metal Guillaume Foisy OS
+ 
+ This repo is for backup purpose and Learning not for prod. use...
+ 
+ Me Guillaume will comment every line in the future maybe create separated bloc for each functionality for a better understanding...  to see....
