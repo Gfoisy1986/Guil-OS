@@ -7,4 +7,4 @@
 
  32bits  bootloader and kernel (as is)
 
- 64bits bootloader and simple kernel to show boot process...  (More content on the ways...)
+ 64bits bootloader and simple kernel to show boot process...  C Kernel Version on testbench incomplete...(More content on the ways...)
