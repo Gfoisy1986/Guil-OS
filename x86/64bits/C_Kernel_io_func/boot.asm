@@ -8,7 +8,7 @@
 
 ; Define our entry point as a global symbol so the linker can find it.
 global main
-extern main
+
 
 ; --- Kernel Code ---
 
