@@ -1,27 +1,34 @@
 #include "io.h"
 
-// The assembly function that writes a string to video memory.
-// It is defined in io_asm.asm and linked with this file.
-extern void put_string_asm(const char* str);
-
-// The assembly function that writes a character to video memory.
+// The assembly function that writes a single character to video memory.
 extern void put_char_asm(char c);
 
-// Prints a null-terminated string to the screen.
+// The assembly function that writes a string to video memory.
+extern void put_string_asm(const char* str);
+
+// The assembly function that clears the screen.
+extern void clear_screen_asm();
+
+/**
+ * @brief Prints a single character to the screen.
+ * @param c The character to print.
+ */
+void print_char(char c) {
+    put_char_asm(c);
+}
+
+/**
+ * @brief Prints a null-terminated string to the screen.
+ * @param str The string to print.
+ */
 void print_string(const char* str) {
     put_string_asm(str);
 }
 
-// Clears the screen by writing spaces to every character position.
+/**
+ * @brief Clears the screen.
+ */
 void clear_screen() {
-    // The video memory starts at 0xB8000.
-    char* video_memory = (char*)0xB8000;
-
-    // Each character and color attribute pair is 2 bytes.
-    // A standard 80x25 screen is 2000 characters.
-    for (int i = 0; i < 2000; i++) {
-        *video_memory = ' ';         // Write a space character.
-        *(video_memory + 1) = 0x07;  // Write the color attribute (light gray).
-        video_memory += 2;           // Move to the next character position.
-    }
+    clear_screen_asm();
 }
+
