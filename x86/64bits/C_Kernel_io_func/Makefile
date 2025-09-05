@@ -1,9 +1,9 @@
 # Makefile for the 64-bit bare-metal C kernel
 
 # Toolchain settings
-CC = x86_64-elf-gcc
+CC = gcc
 AS = nasm
-LD = x86_64-elf-ld
+LD = ld
 
 # Flags for the C compiler
 # -ffreestanding: Tells GCC we are not linking against a standard C library.
