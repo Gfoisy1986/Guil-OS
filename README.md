@@ -11,8 +11,8 @@
   
  ### Work Done...
  
-  - X86_16bits bootloader and kernel (simple terminal and FLAT file system).  (as is) Complete...
-
+  - X86_16bits bootloader and kernel (simple terminal and file system).  (as is) Current project ...
+  - We put working OS in build directory!
 
  ### On the workbench
  
