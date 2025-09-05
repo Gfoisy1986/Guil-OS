@@ -103,3 +103,35 @@ ls: Lists the files in the simple file system.
 cat <filename>: Displays the contents of a file.
 
 echo <text>: Echos the provided text to the console.
+
+
+
+
+
+
+
+
+
+
+
+
+
+test:
+
+
+nasm -f bin boot.asm -o bootloader.bin /
+nasm -f bin kernel.asm -o kernel.bin
+
+python build_disk_image.py  (Garbage) continue using cat :P
+
+1- in cat  : bootloader.bin = 512byte + kernel.bin = 5120byte have to truncate + readme_content.bin = 512byte + message_content.bin = 512 byte
+
+truncate -s 5120 kernel.bin same with other but 512 :P
+
+2- then cat them all
+3- cat boot.bin kernel.bin readme_content.bin message_content.bin> disk.img
+
+qemu-system-i386 -fda disk.img
+qemu-system-i386 -drive format=raw,file=disk.img
+qemu-system-i386 -drive format=raw,file=disk.img -vga std 
+
