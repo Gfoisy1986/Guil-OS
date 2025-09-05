@@ -7,13 +7,13 @@
 [bits 64]                       ; Set the assembler to 64-bit mode.
 
 ; Define our entry point as a global symbol so the linker can find it.
-global kernel_entry_64
+global main
 extern main
 
 ; --- Kernel Code ---
 
 ; Entry point for the 64-bit kernel.
-kernel_entry_64:
+main:
     ; Set up the stack. A 64-bit environment needs a 64-bit stack pointer.
     mov rsp, 0x90000            ; Set the stack pointer (RSP). A good address in high memory.
 
@@ -27,7 +27,7 @@ kernel_entry_64:
 ; This routine prints a null-terminated string directly to the VGA video memory buffer.
 ; It works in 64-bit mode as it does not rely on BIOS interrupts.
 ; Input: RSI = address of the string to print.
-print_string_64:
+print_string:
     ; We are printing to the video memory buffer at 0xB8000.
     ; Each character is 2 bytes: ASCII character (1 byte) and color attribute (1 byte).
     ; Default color: light gray on black (0x07).
