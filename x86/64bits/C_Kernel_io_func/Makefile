@@ -1,69 +1,82 @@
-# Makefile for the 64-bit bare-metal C kernel
+# =====================================================================================================================
+# Makefile for a 64-bit Bare-Metal C Kernel
+# This makefile automates the entire build process, from assembling and compiling to linking and creating the final
+# bootable disk image.
+# =====================================================================================================================
 
-# Toolchain settings
-CC = gcc
-AS = nasm
+# Define variables for the tools and file names.
+NASM = nasm
+GCC = gcc
 LD = ld
+OBJCOPY = objcopy
+QEMU = qemu-system-x86_64
 
-# Flags for the C compiler
-# -ffreestanding: Tells GCC we are not linking against a standard C library.
-# -nostdlib: Don't link against the standard C library.
-# -I.: Include the current directory for header files.
-# -c: Compile only, do not link.
-# -m64: Generate 64-bit code.
-CFLAGS = -ffreestanding -nostdlib -I. -m64 -c
-
-# Flags for the assembler
-# -f elf64: Generate 64-bit ELF object files.
-ASFLAGS = -f elf64
-
-# Flags for the linker
-# -T: Use the specified linker script.
-# -nostdlib: Don't link against the standard C library.
-# -m elf_x86_64: Specify the target architecture.
-LDFLAGS = -T linker.ld -nostdlib -m elf_x86_64
-
-# Files
-BOOT_SRC = boot.asm
-KERNEL_SRC = kernel.c io.c
-IO_ASM_SRC = io_asm.asm
-LINKER_SCRIPT = linker.ld
+BOOT_ASM = boot.asm
+KERNEL_C = kernel.c
+IO_C = io.c
+IO_ASM = io_asm.asm
+LINKER = linker.ld
 
 BOOT_BIN = boot.bin
-KERNEL_OBJS = kernel.o io.o io_asm.o
+KERNEL_O = kernel.o
+IO_O = io.o
+IO_ASM_O = io_asm.o
+KERNEL_ELF = kernel.elf
 KERNEL_BIN = kernel.bin
 DISK_IMG = disk.img
-ISO_IMG = myos.iso
 
-.PHONY: all clean iso
-
+# Default target: builds the entire project.
+.PHONY: all
 all: $(DISK_IMG)
 
+# Rule to build the final disk image.
 $(DISK_IMG): $(BOOT_BIN) $(KERNEL_BIN)
-	@echo "Creating disk image..."
+	@echo "Creating bootable disk image..."
+	# Combine the bootloader and kernel into a single image.
+	# The bootloader is 512 bytes, so we place the kernel directly after it.
 	cat $(BOOT_BIN) $(KERNEL_BIN) > $(DISK_IMG)
-	@echo "Disk image created: $(DISK_IMG)"
+	@echo "Disk image created successfully: $(DISK_IMG)"
 
-$(BOOT_BIN): $(BOOT_SRC)
-	@echo "Assembling bootloader..."
-	$(AS) $(BOOT_SRC) -o $(BOOT_BIN)
+# Rule to link the kernel.
+$(KERNEL_BIN): $(KERNEL_ELF)
+	@echo "Converting ELF to a flat binary..."
+	# Use objcopy to strip the ELF headers and create a flat binary.
+	$(OBJCOPY) -O binary $< $@
 
-$(KERNEL_BIN): $(KERNEL_OBJS) $(LINKER_SCRIPT)
+$(KERNEL_ELF): $(KERNEL_O) $(IO_O) $(IO_ASM_O) $(LINKER)
 	@echo "Linking kernel..."
-	$(LD) $(LDFLAGS) $(KERNEL_OBJS) -o $(KERNEL_BIN)
+	# -T linker.ld: Use our custom linker script.
+	# -nostdlib: Do not link the standard C libraries (like glibc).
+	# -m elf_x86_64: Specify the 64-bit ELF output format.
+	$(LD) -T $(LINKER) -nostdlib -m elf_x86_64 $(KERNEL_O) $(IO_O) $(IO_ASM_O) -o $(KERNEL_ELF)
 
-%.o: %.c
-	@echo "Compiling $<..."
-	$(CC) $(CFLAGS) $< -o $@
+# Rule to compile the C files.
+$(KERNEL_O): $(KERNEL_C)
+	@echo "Compiling $(KERNEL_C)..."
+	# -ffreestanding: Compile in a freestanding environment (no OS).
+	# -nostdlib: Do not link the standard C libraries.
+	# -m64: Compile for 64-bit architecture.
+	# -I.: Include the current directory for header files.
+	$(GCC) -ffreestanding -nostdlib -I. -m64 -c $(KERNEL_C) -o $(KERNEL_O)
 
-io_asm.o: $(IO_ASM_SRC)
-	@echo "Assembling $<..."
-	$(AS) $(ASFLAGS) $(IO_ASM_SRC) -o $@
+$(IO_O): $(IO_C)
+	@echo "Compiling $(IO_C)..."
+	$(GCC) -ffreestanding -nostdlib -I. -m64 -c $(IO_C) -o $(IO_O)
 
-iso: $(DISK_IMG)
-	@echo "Creating ISO image..."
-	xorriso -as mkisofs -iso-level 3 -o $(ISO_IMG) -b $(DISK_IMG) -no-emul-boot -boot-load-size 4 .
+# Rule to assemble the assembly files.
+$(BOOT_BIN): $(BOOT_ASM)
+	@echo "Assembling $(BOOT_ASM)..."
+	# -o boot.bin: Output the binary file.
+	$(NASM) $(BOOT_ASM) -o $(BOOT_BIN)
 
+$(IO_ASM_O): $(IO_ASM)
+	@echo "Assembling $(IO_ASM)..."
+	# -f elf64: Create a 64-bit ELF object file.
+	$(NASM) -f elf64 $(IO_ASM) -o $(IO_ASM_O)
+
+# Rule to clean the build directory.
+.PHONY: clean
 clean:
 	@echo "Cleaning up..."
-	rm -f $(BOOT_BIN) $(KERNEL_OBJS) $(KERNEL_BIN) $(DISK_IMG) $(ISO_IMG)
+	rm -f $(BOOT_BIN) $(KERNEL_O) $(IO_O) $(IO_ASM_O) $(KERNEL_ELF) $(KERNEL_BIN) $(DISK_IMG)
+
