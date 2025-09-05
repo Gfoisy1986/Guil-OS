@@ -1,7 +1,7 @@
 /* A custom linker script for our 64-bit bare-metal kernel. */
 
 /* Define the entry point of the kernel. The bootloader will jump to this symbol. */
-ENTRY(kmain)
+ENTRY(main)
 
 /* We specify that the linker should output a raw binary, without any ELF headers. */
 OUTPUT_FORMAT(binary)
@@ -20,7 +20,7 @@ SECTIONS
         . = BASE_ADDRESS;
         
         /* Put all the executable code into this section. */
-        KEEP(*(.text.kmain))
+        KEEP(*(.text.main))
         *(.text)
         
     }
