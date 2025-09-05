@@ -1,115 +1,53 @@
 ; ---------------------------------------------------------------------------------------------------------------------
-; A simple 64-bit bootloader that switches the CPU from 16-bit Real Mode to 32-bit Protected Mode.
-; This code is a boot sector, loaded by the BIOS at 0x7C00.
-; Its purpose is to prepare the CPU environment and then load and jump to a 32-bit kernel.
+; A simple 64-bit kernel that runs in Long Mode.
+; It is loaded by the bootloader at 0x10000.
+; This kernel provides a simple command-line interface by writing directly to video memory.
 ; ---------------------------------------------------------------------------------------------------------------------
 
-[org 0x7c00]                    ; Set the origin of the code to 0x7c00, the address where the BIOS loads the boot sector.
-[bits 16]                       ; The CPU starts in 16-bit real mode. All instructions must be 16-bit initially.
+[bits 64]                       ; Set the assembler to 64-bit mode.
 
-; --- Constants for kernel loading ---
-KERNEL_SECTOR_COUNT equ 10      ; Number of sectors to load for our kernel.
-KERNEL_LOAD_ADDR equ 0x10000    ; Memory address where the 32-bit kernel will be loaded.
+; Define our entry point as a global symbol so the linker can find it.
+global kernel_entry_64
+extern main
 
-; --- The Bootloader Code ---
-start:
-    ; Set up the segment registers for a clean environment.
-    xor ax, ax                  ; Clear the AX register.
-    mov ds, ax                  ; Set the Data Segment register to 0.
-    mov es, ax                  ; Set the Extra Segment register to 0.
-    mov ss, ax                  ; Set the Stack Segment register to 0.
-    mov sp, 0x7c00              ; Set the Stack Pointer to the start of the boot sector.
+; --- Kernel Code ---
 
-    ; Print a message to the screen using BIOS interrupt 0x10.
-    mov si, boot_msg            ; Load the address of the boot message string into SI.
-    call print_string_16        ; Call the subroutine to print the string.
+; Entry point for the 64-bit kernel.
+kernel_entry_64:
+    ; Set up the stack. A 64-bit environment needs a 64-bit stack pointer.
+    mov rsp, 0x90000            ; Set the stack pointer (RSP). A good address in high memory.
 
-    ; Load the kernel from disk. We use BIOS interrupt 0x13, which works in 16-bit real mode.
-    mov ah, 0x02                ; Function 0x02: Read Sector(s) from drive.
-    mov al, KERNEL_SECTOR_COUNT ; AL = number of sectors to read.
-    mov ch, 0x00                ; CH = cylinder number (0).
-    mov cl, 0x02                ; CL = sector number (start reading from sector 2, as sector 1 is the boot sector itself).
-    mov dh, 0x00                ; DH = head number (0).
-    mov dl, 0x00                ; DL = drive number (A:, 00h).
+    ; Call the main C function.
+    call main                   ; Transfer control to our C kernel.
+    
+    ; Loop indefinitely if main returns.
+    jmp $                       ; Loop indefinitely.
 
-    ; Correctly set up the destination address in ES:BX for the BIOS call.
-    mov ax, [cs:KERNEL_LOAD_ADDR]
-    mov es, ax
-    xor bx, bx
-
-    int 0x13                    ; Call the BIOS interrupt to perform the read operation.
-
-    ; Check for read errors.
-    jc read_error
-
-    ; --- Transition to 32-bit Protected Mode ---
-
-    ; 1. Disable interrupts. We don't want any interrupts occurring during the mode switch.
-    cli                         ; Clear the Interrupt Flag.
-
-    ; 2. Load the Global Descriptor Table (GDT).
-    lgdt [gdt_descriptor]       ; Load the GDT into the GDTR register. The GDT is a crucial table that defines our memory segments.
-
-    ; 3. Enable the Protected Mode bit in the CR0 control register.
-    mov eax, cr0                ; Move the contents of the CR0 register into EAX.
-    or eax, 1                   ; Set the Protected Mode Enable (PE) bit.
-    mov cr0, eax                ; Move the new value back into CR0.
-
-    ; The CPU is now in protected mode, but the segment registers still hold 16-bit selectors.
-    ; We need a long jump to reset the instruction pipeline and reload CS with a 32-bit selector.
-    jmp dword 0x08:0x10000       ; Jump to the kernel's entry point at 0x10000 using the 32-bit code segment (0x08).
-
-read_error:
-    ; If there's a disk read error, display an error message and halt.
-    mov si, error_msg           ; Load the address of the error message string.
-    call print_string_16        ; Print the error message.
-    cli                         ; Disable all interrupts.
-    hlt                         ; Halt the CPU indefinitely.
-
-; --- Subroutine to Print a Null-Terminated String in 16-bit Mode ---
-; Input: SI = Address of the string to print.
-print_string_16:
-    mov ah, 0x0e                ; Function 0x0E: Teletype Output. Prints a character to the screen.
+; --- 64-bit Printing Subroutine ---
+; This routine prints a null-terminated string directly to the VGA video memory buffer.
+; It works in 64-bit mode as it does not rely on BIOS interrupts.
+; Input: RSI = address of the string to print.
+print_string_64:
+    ; We are printing to the video memory buffer at 0xB8000.
+    ; Each character is 2 bytes: ASCII character (1 byte) and color attribute (1 byte).
+    ; Default color: light gray on black (0x07).
+    mov rdi, 0xB8000            ; Load the video memory address into RDI (Destination Index).
+    
 .loop:
-    lodsb                       ; Load a byte from the string (pointed to by SI) into AL and increment SI.
-    or al, al                   ; Check if the character is the null terminator.
-    jz .done                    ; If it is, jump to .done.
-    int 0x10                    ; Call the BIOS interrupt to print the character in AL.
-    jmp .loop                   ; Loop back to print the next character.
+    lodsb                       ; Load a byte from the string (pointed to by RSI) into AL and increment RSI.
+    test al, al                 ; Check if the character is the null terminator.
+    jz .done                    ; If it is, we're done.
+    
+    ; Write the character to video memory.
+    mov [rdi], al               ; Store the character in AL at the current video memory address.
+    
+    ; Write the color attribute.
+    mov al, 0x07                ; The color attribute (light gray on black).
+    mov [rdi+1], al             ; Store the color byte at the next address.
+    
+    add rdi, 2                  ; Move to the next character position in video memory (2 bytes per character).
+    jmp .loop                   ; Loop to the next character.
+    
 .done:
     ret                         ; Return from the subroutine.
 
-; --- Data Section ---
-boot_msg db 'Switching to 32-bit Protected Mode...', 0x0d, 0x0a, 0
-error_msg db 'Disk read error!', 0x0d, 0x0a, 0
-
-; --- Global Descriptor Table (GDT) ---
-; The GDT is a table of descriptors that define memory segments.
-gdt_start:
-    ; Null Descriptor (required)
-    dq 0                        ; A 64-bit value of 0.
-
-    ; 32-bit Code Segment Descriptor
-    dw 0xFFFF                   ; Limit (bits 0-15)
-    dw 0x0000                   ; Base (bits 0-15)
-    db 0x00                     ; Base (bits 16-23)
-    db 10011010b                ; Access Byte (P, DPL, S, Type)
-    db 11001111b                ; Flags (G, D/B, L, AVL) and high 4 bits of Limit
-    db 0x00                     ; Base (bits 24-31)
-
-    ; 32-bit Data Segment Descriptor
-    dw 0xFFFF                   ; Limit (bits 0-15)
-    dw 0x0000                   ; Base (bits 0-15)
-    db 0x00                     ; Base (bits 16-23)
-    db 10010010b                ; Access Byte (P, DPL, S, Type)
-    db 11001111b                ; Flags (G, D/B, L, AVL) and high 4 bits of Limit
-    db 0x00                     ; Base (bits 24-31)
-gdt_end:
-
-gdt_descriptor:
-    dw gdt_end - gdt_start - 1  ; GDT Limit (size of the GDT - 1)
-    dd gdt_start                ; GDT Base Address
-
-; --- Boot Sector Padding and Signature ---
-times 510 - ($ - $$) db 0       ; Pad the entire bootloader to 510 bytes.
-dw 0xAA55                       ; Boot signature (0xAA55), required by the BIOS.
