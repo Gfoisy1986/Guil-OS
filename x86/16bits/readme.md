@@ -127,7 +127,7 @@ python build_disk_image.py  (Garbage) continue using cat :P
 truncate -s 5120 kernel.bin same with other but 512 :P
 
 2- then cat them all
-3- cat boot.bin kernel.bin readme.bin message.bin> disk.img
+cat bootloader.bin kernel.bin readme.bin message.bin > disk.img
 
 qemu-system-i386 -fda disk.img
 qemu-system-i386 -drive format=raw,file=disk.img
