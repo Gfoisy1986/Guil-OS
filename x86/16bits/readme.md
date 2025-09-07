@@ -10,8 +10,6 @@ boot.asm: The initial 512-byte boot sector that is loaded by the BIOS. Its prima
 
 kernel.asm: The main part of the "operating system." It contains the terminal logic, command interpreter, and file system functions.
 
-File System: A very simple, flat-file system is implemented. It stores a hardcoded file table and file data directly on the disk after the boot and kernel sectors.
-
 The file table contains entries for each file, including its name, size, and starting sector.
 
 File data is stored in the sectors following the file table.
@@ -129,7 +127,7 @@ python build_disk_image.py  (Garbage) continue using cat :P
 truncate -s 5120 kernel.bin same with other but 512 :P
 
 2- then cat them all
-3- cat boot.bin kernel.bin readme_content.bin message_content.bin> disk.img
+3- cat boot.bin kernel.bin readme.bin message.bin> disk.img
 
 qemu-system-i386 -fda disk.img
 qemu-system-i386 -drive format=raw,file=disk.img
