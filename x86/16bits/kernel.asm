@@ -42,37 +42,35 @@ start:
 
 .process_command:
    
+    
+
+    
 
     call new_line                   ; Print newline
     movzx bx, byte [buffer_pos]     ; Load buffer position
     mov byte [cmd_buffer + bx], 0  ; Null-terminate command
-    mov cx, 10                ; 10 words
-    mov di, token_table
-    xor ax, ax
-    rep stosw                 ; Fill with 0s
+    
+    mov si, cmd_buffer          ; Point SI to command buffer     
     call tokenize_input             ; Split command into tokens
-    mov si, [token_table]         ; First token
-    call print_string     ; Print first token for debugging
     call new_line          ; Newline
-    mov si, [token_table + 2]     ; Second token
-    call print_string          ; Print second token for debugging
-    call new_line           ; Newline
+    
 
-    mov si, cmd_buffer              ; Load command buffer into SI
+    mov si, [token_table + 0]         ; First token
     mov di, help_cmd                ; Load "help" string into DI
     call compare_string             ; Compare input with "help"
     jnc .is_help                    ; Jump if match
 
-    mov si, cmd_buffer              ; Load command buffer into SI
+    mov si, [token_table + 0]         ; First token
     mov di, ls_cmd                  ; Load "ls" string
     call compare_string             ; Compare input
     jnc .is_ls                      ; Jump if match
-   
-    
-    mov si, cmd_buffer              ; Load command buffer into SI
-    mov di, cat_cmd                  ; Load "cat" string
-    call compare_string_space              ; Compare with space tolerance
-    jnc .is_cat                      ; Jump if match
+
+
+
+    mov si, [token_table + 0]
+    mov di, cat_cmd                   ; Load "cat" string
+    call compare_string               ; Compare with space tolerance
+    jnc .is_cat                       ; Jump if match
 
     mov si, cmd_buffer              ; Load command buffer into SI
     mov di, echo_cmd                ; Load "echo" string
@@ -89,19 +87,19 @@ start:
     jmp .reset_prompt               ; Reset prompt
 
 .is_help:
-    mov si, cmd_buffer              ; Load command buffer
+    
     mov si, help_msg                ; Load help message
     call print_string              ; Print help
     jmp .reset_prompt               ; Reset prompt
 
 .is_ls:
-    mov si, cmd_buffer              ; Load command buffer
+    mov si, [token_table]           ; Load command buffer
     call ls_command                 ; Execute ls command
     jmp .reset_prompt               ; Reset prompt
 
 .is_cat:
+
    
-    mov si, cmd_buffer              ; Load command buffer
     call cat_command                 ; Execute cat command
     jmp .reset_prompt                ; Reset prompt
 
@@ -118,20 +116,12 @@ start:
     int 0x10                        ; Clear screen
     call new_line                   ; Print newline
     call print_prompt               ; Show prompt
-    mov cx, 10                ; 10 words
-    mov di, token_table
-    xor ax, ax
-    rep stosw                 ; Fill with 0s
     jmp .main_loop                  ; Resume loop
 
 .reset_prompt:
     mov byte [buffer_pos], 0       ; Reset buffer position
     call new_line                   ; Print newline
     call print_prompt               ; Show prompt
-    mov cx, 10                ; 10 words
-    mov di, token_table
-    xor ax, ax
-    rep stosw                 ; Fill with 0s
     jmp .main_loop                  ; Resume loop
 
 ; --- Constants ---
@@ -164,8 +154,9 @@ read_char:
     ret                                  ; Return from subroutine
 
 tokenize_input:
+   
 
-    mov si, cmd_buffer         ; Start of input
+   
     mov di, token_table        ; Start of token table
     xor bx, bx                 ; Token counter
 
@@ -226,6 +217,7 @@ print_string:
 
 compare_string:
 .loop:
+   
     lodsb                                ; Load byte from [SI] into AL
     cmp al, [di]                         ; Compare with byte at [DI]
     jne .not_equal                       ; If not equal, exit
@@ -261,18 +253,24 @@ compare_string_space:
 
 
 compare_string_with_len:
-    mov cx, 16                           ; Set comparison length to 16 bytes
+    
+    
 .loop:
-    lodsb                                ; Load byte from [SI] into AL
-    cmp al, [di]                         ; Compare with byte at [DI]
-    jne .not_equal                       ; If not equal, exit
-    inc di                               ; Move to next byte in DI
-    loop .loop                           ; Repeat for 16 bytes
-    clc                                  ; Clear carry flag (match)
-    ret                                  ; Return
+    lodsb                               ; Load byte from [SI] into AL
+    cmp al, [di]                        ; Compare AL with byte at [DI]
+    jne .not_equal                      ; If not equal, jump to .not_equal
+    cmp al, 0                           ; Check for null terminator
+    je .match                           ; If null, strings match
+    inc di                              ; Move to next byte in DI
+    loop .loop                          ; Repeat until CX = 0
+.match:
+    clc                                 ; Clear carry flag (strings match)
+    ret                                 ; Return
 .not_equal:
-    stc                                  ; Set carry flag (no match)
-    ret                                  ; Return
+    stc                                 ; Set carry flag (strings don't match)
+    ret                                 ; Return
+
+ 
 
 new_line:
     mov ah, 0x0e                         ; BIOS teletype output function
@@ -285,34 +283,51 @@ new_line:
     ret                                  ; Return from subroutine
 
 ls_command:
-    mov si, cmd_buffer          ; Load command buffer into SI
-    mov si, file_table              ; Point SI to start of file table
-    call print_string
-   ; jmp .hang                 ; was for debugging :P
-    mov cx, 40                      ; Set loop counter to 40 entries
+
+
+ mov di, file_table        ; Start of file table
+mov cx, 5                 ; Max entries (or loop until empty)
 .loop:
-    mov al, [si]                    ; Load first byte of current file entry
-    cmp al, 0                       ; Check if entry is empty (end marker)
-    je .done_ls                     ; If empty, exit loop
-    call new_line                   ; Print a newline
-    call print_string               ; Print the filename at [SI]
-    add si, 16                      ; Move to next file entry (16 bytes per entry)
-    loop .loop                      ; Repeat for remaining entries
-
-.hang:
-    cli             ; Disable interrupts
-    hlt             ; Halt CPU until next interrupt (which won't come)
-    jmp .hang       ; Loop forever to stay frozen
+    mov al, [di]          ; First byte of entry
+    cmp al, 0             ; Is entry empty?
+    je .done              ; If yes, stop listing
+    push di
 
 
-.done_ls:
+
+
+
+
+
+
+    call print_string     ; Print filename  project faire un parameter to print_string !
+    call new_line
+    pop di
+    call print_string     ; Print filename again for clarity
+    call new_line
+    add di, 16            ; Move to next entry
+    call print_string
+
+
+
+
+
+
+
+
+
+
     
-    ret                             ; Return from subroutine
+    loop .loop
+.done:
+    ret
+
 
 cat_command:
-    add si, 4                   ; Move SI to point to filename
-    call new_line                  ; Print newline
-    call print_string             ; Print filename
+
+    mov si, [token_table + 2]       ; Load second token (filename) into SI
+    call print_string               ; Print filename for debugging
+    call new_line                   ; Newline for clarity
     push si                         ; Save SI
     mov di, file_table              ; Point DI to start of file table
     mov cx, 5                       ; Set loop counter to 5 entries
@@ -347,29 +362,42 @@ cat_command:
     ret                               ; Return from subroutine
 
 read_file_fat:
-    mov si, FILE_DATA_START         ; Point SI to start of file data buffer
-.read_loop:
-    mov ah, 0x02                    ; BIOS read sector function
-    mov al, 1                       ; Read one sector
+    mov si, FILE_DATA_START         ; SI = buffer start for file data
+    call new_line                   ; Newline for clarity
+    call print_string               ; Debug: Indicate file read start
+    call new_line                   ; Newline for clarity
+    
+.next_sector:
+    mov ah, 0x02                    ; BIOS: Read sector
+    mov al, 1                       ; Read 1 sector
     mov ch, 0x00                    ; Cylinder 0
-    mov cl, bl                      ; Sector number from BL
     mov dh, 0x00                    ; Head 0
-    mov dl, 0x00                    ; Drive 0 (floppy)
+    mov cl, bl                      ; Sector number (from BL)
+    inc cl                          ; BIOS sectors start at 1
+    mov dl, 0x80                    ; Drive 0x80 = first hard disk
     mov bx, si                      ; Buffer to load sector into
-    int 0x13                        ; BIOS disk read interrupt
-    jc .error                       ; If error, jump to error handler
-    add si, DISK_SECTOR_SIZE        ; Move buffer pointer to next sector
-    mov di, FAT_TABLE_START         ; Point DI to FAT table
-    add di, bx                      ; Offset by sector number
-    mov bl, [di]                    ; Load next sector from FAT
-    cmp bl, EOF_MARKER              ; Check for end of file
-    je .done                        ; If EOF, finish reading
-    jmp .read_loop                  ; Continue reading next sector
+    int 0x13                        ; BIOS disk read
+    jc .error                       ; Jump if read failed
+
+    add si, DISK_SECTOR_SIZE        ; Move buffer pointer forward
+
+    ; Get next sector from FAT
+    mov di, FAT_TABLE_START         ; DI = start of FAT
+    mov al, bl                      ; AL = current sector
+    xor ah, ah                      ; AX = sector number
+    add di, ax                      ; DI = FAT + sector index
+    mov bl, [di]                    ; BL = next sector
+
+    cmp bl, EOF_MARKER              ; End of file?
+    je .done                        ; If yes, we're done
+    jmp .next_sector                ; Otherwise, read next sector
+
 .error:
-    mov si, disk_error_msg          ; Load disk error message
-    call print_string               ; Print error message
+    mov si, disk_error_msg
+    call print_string
 .done:
-    ret                             ; Return from subroutine
+    ret
+
 
 
 ; --- Data ---
@@ -380,16 +408,17 @@ cat_cmd:              db 'cat', 0               ; Command string for "cat"
 echo_cmd:             db 'echo', 0              ; Command string for "echo"
 clear_cmd:            db 'clear', 0             ; Command string for "clear"
 unknown_cmd:          db 'Unknown command!', 0x0d, 0x0a, 0 ; Error message for unknown command
-help_msg:             db 'Available commands: help, ls, cat <file>, echo <text>, clear', 0x0d, 0x0a, 0 ; Help message
+help_msg:             db 'Available commands: help, ls, cat <file>, echo <text>, clear', 0 ; Help message
 file_not_found_msg:   db 'File not found.', 0x0d, 0x0a, 0 ; Error message for missing file
 disk_error_msg:       db 'Disk read error!', 0x0d, 0x0a, 0 ; Error message for disk failure
 kernel_msg:           db 'Kernel started!', 0   ; Confirmation message after boot
 
 
+
 ; --- File Table ---
 file_table:
-    db 'readme', 0,0,0,0,0,0,0, 11, 0             ; File entry for "readme", starts at sector 2
-    db 'message', 0,0,0,0,0,0, 12, 0              ; File entry for "message", starts at sector 3
+    db 'readme', 0,0,0,0,0,0,0, 11, 0             ; File entry for "readme", starts at sector 11
+    db 'message', 0,0,0,0,0,0, 12, 0              ; File entry for "message", starts at sector 12
     db 0                                         ; End of file table marker
 
 ; --- FAT Table ---
@@ -397,7 +426,7 @@ fat_table:
     times 11 db 0xFF      ; sectors 0–10
     db 0xFF               ; sector 11 = EOF
     db 0xFF               ; sector 12 = EOF
-    times MAX_SECTORS - 15 db 0 ; pad remaining entries
+    times MAX_SECTORS - 13 db 0 ; pad remaining entries
 
 
 
