@@ -26,6 +26,10 @@ start:
     mov cr0, eax
 
     jmp CODE_SEG:protected_mode  ; Far jump to flush pipeline
+
+
+
+
 [BITS 32]
 ; --- Protected Mode Entry ---
 protected_mode:
@@ -38,16 +42,24 @@ protected_mode:
 
 
     call print_pm
+
     jmp $                ; Hang or jump to kernel main
+
+delay:
+    mov ecx, 0x100000       ; Adjust this value for longer/shorter delay
+.loop:
+    dec ecx
+    jnz .loop
+    ret
 
 ; --- Protected Mode Print Routine ---
 print_pm:
     mov edi, 0xB8000
     mov ax, 0x0720         ; Space character with gray-on-black
-    mov ecx, 80 * 25
+    mov ecx, 80 * 20
     rep stosw
 
-    mov edi, 0xB8000 + (20 * 80) * 2
+    mov edi, 0xB8000 + (0 * 0) * 2
 
     mov si, msg_pm           ; String pointer
     mov ah, 0x07             ; Attribute: light gray on black
@@ -95,9 +107,7 @@ gdt_descriptor:
     dw gdt_end - gdt_start - 1   ; Size of GDT (limit)
     dd gdt_start                 ; Linear base address of GDT
 
-; --- Segment Selectors ---
-CODE_SEG equ 0x08
-DATA_SEG equ 0x10
+
 
 ; --- Real Mode Print Routine ---
 newline:
@@ -121,7 +131,14 @@ print:
 ; --- Messages ---
 message  db 'Kernel loaded...', 0
 message2 db 'Kernel up n running!...', 0
-msg_pm   db 'Protected mode active!', 0
+;msg_pm db "Hello from Protected Mode!", 0x0A, "Second line here.", 0
+msg_pm db "Kernel load and in protected mode...", 0
+; --- Segment Selectors ---
+CODE_SEG equ 0x08
+DATA_SEG equ 0x10
+
+row dw 0        ; Current row (0–24)
+col dw 0        ; Current column (0–79)
 
 ; --- Padding to 512 bytes ---
 times 512 - ($ - $$) db 0
