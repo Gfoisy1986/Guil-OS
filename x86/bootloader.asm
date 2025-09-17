@@ -18,7 +18,7 @@ mov dl, 0x80         ; First hard disk
 mov ch, 0            ; Cylinder
 mov cl, 2            ; Sector 2
 mov ah, 2            ; Read sectors
-mov al, 100           ; Number of sectors
+mov al, 115         ; Number of sectors
 int 0x13
 jc disk_error         ; Jump if carry flag is set (error)
 

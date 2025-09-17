@@ -5,18 +5,8 @@ global protected_mode
 
 start:
 
-
-
-    ; Print initial messages
-    mov si, message
-    call print
-    call newline
-    call newline
-
-    mov si, message2
-    call print
-
     ; Switch to 32-bit protected mode
+
 
     lgdt [gdt_descriptor]   ; Load Global Descriptor Table
     cli                     ; Disable interrupts
@@ -38,16 +28,31 @@ protected_mode:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    call Clear_screen
+
 
 .start_shell:
-    mov esi, msg_pm
-    call print_pm
-    call check_auto_scroll
+    ; Load file table from disk
+    mov eax, 111                  ; LBA start of file table
+    mov ecx, 2                    ; Number of sectors to read
+    mov edi, 0x80000              ; Destination buffer
+    call read_sectors
+
+    ; Display shell prompt or welcome message
+    call Clear_screen
+     ; Initialize cursor position
+    mov byte [cursor_col], 0
+    mov byte [logical_cursor_row], 0
+    mov esi, msg_pm               ; Pointer to message string
+    call print_string_pm
+
+    ; Prepare for user input
     call clear_input_buffer       ; 🧼 Clear buffer BEFORE reading
     call read_input_pm            ; Read user input
     call parse_command            ; Parse and execute
-    jmp .start_shell              ; Loop back
+
+    jmp .start_shell              ; Loop back for next command
+
+
 
 
 
@@ -55,52 +60,323 @@ protected_mode:
 
 
 parse_command:
-    mov si, input_buffer
+    mov esi, input_buffer
+    call save_command
 
     ; Check for "-help"
+    mov si, input_buffer
     mov di, cmd_help_inline
-    push si
     call strcmp
-    pop si
     cmp al, 1
     je .handler_help
 
     ; Check for "-ls"
+    mov si, input_buffer
     mov di, cmd_ls_inline
-    push si
     call strcmp
-    pop si
     cmp al, 1
     je .handler_ls
 
+    ; Check for "-cat"
+
+    mov esi, input_buffer
+    mov edx, cmd_cat_inline
+    mov edi, edx
+    mov ecx, 4
+    call strncmp32
+    cmp al, 1
+    je .handler_cat
+
     ; Unknown command
+
+    ; Ensure cursor is within visible bounds before printing
+    movzx eax, byte [logical_cursor_row]
+    movzx ecx, byte [scroll_offset]
+    sub eax, ecx
+    cmp eax, 0                  ; Assuming 25 visible rows (0–24)
+    jb .ok_to_print
+
+    ; Scroll if needed
+    inc byte [scroll_offset]
+    mov byte [screen_dirty], 1
+    call redraw_screen
+
+.ok_to_print:
     mov esi, msg_unknown
-    call print_pm
+    call print_string_pm
+
     jmp .advance_cursor
+
 
 .handler_help:
     mov esi, msg_help
-    call print_pm
+    call print_string_pm
+
     jmp .advance_cursor
 
-.handler_ls:
-    mov esi, msg_ls
-    call print_pm
+.handler_cat:
+    call tokenize32  ; tokenize fichier label in this case file of cat(-
+    call load_and_print_file
+
+
     jmp .advance_cursor
+
+
+
+.handler_ls:
+    call save_command
+    mov esi, FILE_TABLE_ADDR   ; Start of file table
+    mov ecx, MAX_FILES         ; Number of entries (e.g., 32)
+
+.ls_loop:
+    mov al, [esi]
+    cmp al, 0
+    je .skip
+
+    push ecx
+    push esi
+    call print_string_pm
+
+    pop esi
+    pop ecx
+
+.continue_loop:
+    add esi, 32
+    loop .ls_loop
+    jmp .advance_cursor
+
+.skip:
+    add esi, 32                ; Move to next entry
+    loop .ls_loop
+
+    jmp .advance_cursor
+
 
 .advance_cursor:
     call clear_input_buffer
-    ; Move to next line
-    inc byte [logical_cursor_row]
-    mov byte [cursor_col], 0
-    call set_cursor_pm
 
+    ; Advance to next line
+    inc byte [logical_cursor_row]
+    mov al, [input_start_col]
+    mov [cursor_col], al
+    call update_cursor_row
+    call set_cursor_pm
+    ret
+
+tokenize32:
+    ; Input: ESI = pointer to input buffer (e.g., "-cat index.txt")
+    ; Output:
+    ;   - input buffer modified in-place: "-cat\0index.txt"
+    ;   - EBX = pointer to argument ("index.txt")
+    mov esi, input_buffer
+    ;call print_pm
+    add esi, 5                ; Skip first 5 characters ("-cat ")
+    ;call print_pm
+    mov ebx, esi
+    ret
+
+tokenize:
+    mov bx, si
+.loop:
+    mov al, [bx]
+    cmp al, ' '
+    je .split
+    cmp al, 0
+    je .done
+    inc bx
+    jmp .loop
+
+.split:
+    mov byte [bx], 0     ; null-terminate command
+    inc bx               ; BX now points to filename
+.done:
+    ret
+
+read_sectors:
+    ; Inputs:
+    ;   EAX = LBA sector number
+    ;   ECX = number of sectors to read
+    ;   EDI = destination address in memory
+
+.next_sector:
+    push eax
+    push ecx
+
+    ; Extract LBA bytes
+    mov ebx, eax
+    mov dx, 0x1F2         ; Sector count
+    mov al, 1
+    out dx, al
+
+    mov dx, 0x1F3         ; LBA bits 0–7
+    mov al, bl
+    out dx, al
+
+    mov dx, 0x1F4         ; LBA bits 8–15
+    mov al, bh
+    out dx, al
+
+    shr ebx, 16
+    mov dx, 0x1F5         ; LBA bits 16–23
+    mov al, bl
+    out dx, al
+
+    mov dx, 0x1F6         ; Drive/head + LBA bits 24–27
+    mov al, 0xE0
+    or al, bh             ; LBA bits 24–27
+    out dx, al
+
+    mov dx, 0x1F7         ; Command port
+    mov al, 0x20          ; Read sectors (PIO)
+    out dx, al
+
+.wait:
+    mov dx, 0x1F7
+    in al, dx
+
+    test al, 0x08         ; DRQ bit
+    jz .wait
+
+    ; Read 256 words (512 bytes)
+    mov cx, 256
+    mov dx, 0x1F0
+.read_loop:
+    in ax, dx
+    stosw
+    loop .read_loop
+
+    pop ecx
+    pop eax
+    dec ecx
+    jz .done
+
+    inc eax               ; Next LBA sector
+    add edi, 512          ; Advance buffer
+    jmp .next_sector
+
+.done:
+    ret
+
+load_and_print_file:
+    ; Input: ESI = pointer to filename
+    ; Output: prints file contents to screen
+
+    mov edi, file_table           ; EDI = start of file table
+    mov ecx, 2                  ; Max number of entries
+
+.search_loop:
+    push esi                     ; preserve filename pointer
+    push edi                     ; preserve current entry pointer
+
+    mov edx, edi                 ; EDX = current file table entry
+    call strcmp32                ; compare ESI (filename) with EDX (entry)
+
+    pop edi
+    pop esi
+    cmp al, 1
+    je .found
+
+    add edi, 32                  ; move to next entry
+    dec ecx
+    jnz .search_loop
+
+.not_found:
+    mov esi, msg_file_not_found
+    call print_pm
+    ret
+
+.found:
+    ; EDI points to matching entry
+    mov eax, [edi + 16]          ; start_sector
+    mov ecx, [edi + 20]          ; sector_count
+    mov edi, 0x100000
+
+
+
+    call read_sectors           ; Load file into memory
+
+
+    mov esi, 0x100000          ; Print file contents
+
+    call newline_pm
+    call print_string_pm
+    call newline_pm
 
 
     ret
 
+strncmp32:
+    ; ESI = input string
+    ; EDX = file table entry
+    ; ECX = number of characters to compare
+
+.loop:
+    mov al, [esi]
+    mov bl, [edx]
+    cmp al, bl
+    jne .not_equal
+    dec ecx
+    je .equal
+    inc esi
+    inc edx
+    jmp .loop
+
+.not_equal:
+    mov al, 0
+    ret
+
+.equal:
+    mov al, 1
+    ret
 
 
+strcmp32:
+    ; ESI = input string
+    ; EDX = file table entry (filename)
+
+.next_char:
+    mov al, [esi]
+    mov bl, [edx]
+    cmp al, bl
+    jne .not_equal
+    test al, al
+    je .equal
+    inc esi
+    inc edx
+    jmp .next_char
+
+.equal:
+    mov al, 1
+    ret
+
+.not_equal:
+    mov al, 0
+    ret
+
+
+strncmp:
+
+    ; DI = command string
+    ; CX = number of characters to compare
+.loop:
+
+    mov al, [si]
+    mov bl, [di]
+    cmp al, bl
+    jne .not_equal
+    dec cx
+    je .equal
+    inc si
+    inc di
+    jmp .loop
+
+.not_equal:
+    mov al, 0
+    ret
+
+.equal:
+    mov al, 1
+    ret
 
 
 strcmp:
@@ -110,21 +386,19 @@ strcmp:
     cmp al, bl
     jne .not_equal
     test al, al
-    je .check_end
+    je .equal
     inc si
     inc di
     jmp .next_char
 
-.check_end:
-    mov al, [si]
-    test al, al
-    jne .not_equal
+.equal:
     mov al, 1
     ret
 
 .not_equal:
     mov al, 0
     ret
+
 
 scancode_to_ascii:
     ; AL = scancode
@@ -229,12 +503,45 @@ read_input_pm:
 
 
 .read_extended:
-    in al, 0x60                     ; read second byte
+    in al, 0x60                     ; read second byte of extended key
+    cmp al, 0x48                    ; Flèche haut
+    je .arrow_up
+    cmp al, 0x50                    ; Flèche bas
+    je .arrow_down
     cmp al, 0x51                    ; Page Down
     je .scroll_down
     cmp al, 0x49                    ; Page Up
     je .scroll_up
     jmp .read_key
+
+.arrow_up:
+    call fleche_haut
+    mov esi, input_buffer
+    call clear_input_line
+    mov ah, 0x07
+    call print_string_pm
+    call string_length
+    call update_cursor_row
+    call set_cursor_pm
+    mov byte [screen_dirty], 1
+    call redraw_screen
+    jmp .read_key
+
+.arrow_down:
+    call fleche_bas
+    mov esi, input_buffer
+
+    call clear_input_line
+
+    mov ah, 0x07
+    call print_string_pm
+    call string_length
+    call update_cursor_row
+    call set_cursor_pm
+    mov byte [screen_dirty], 1
+    call redraw_screen
+    jmp .read_key
+
 
 .scroll_up:
     cmp byte [scroll_offset], 0
@@ -256,6 +563,41 @@ read_input_pm:
     mov byte [si], 0
     ret
 
+redraw_input_line:
+    ; Reset cursor column
+    lea esi, [input_buffer]
+    mov al, [input_start_col]
+
+
+    ; Clear line visually
+    movzx ecx, byte [logical_cursor_row]
+    imul ecx, 80
+    movzx edx, byte [cursor_col]
+    add ecx, edx
+    shl ecx, 1
+    mov edi, text_buffer
+    add edi, ecx
+
+    mov cx, 80
+    mov al, [cursor_col]
+    sub cx, ax
+
+
+.clear_loop:
+    mov ax, 0x0720
+    stosw
+    loop .clear_loop
+
+
+    ; Print input_buffer
+
+    mov [cursor_col], al
+    call print_string_pm
+
+
+.done:
+    call set_cursor_pm
+    ret
 
 check_auto_scroll:
     movzx eax, byte [logical_cursor_row]
@@ -314,6 +656,15 @@ Clear_screen:
     ret
 
 redraw_screen:
+    cmp byte [scroll_offset], 75      ; 100 - 25
+    jbe .ok
+    mov byte [scroll_offset], 75
+.ok:
+    cmp byte [logical_cursor_row], 99
+    jbe .ok2
+    mov byte [logical_cursor_row], 99
+.ok2:
+
     cmp byte [screen_dirty], 0
     je .skip_redraw
 
@@ -390,31 +741,28 @@ draw_scrollbar:
 ; --- Protected Mode Print Routine ---
 print_pm:
     ; ESI = pointer to string
-    push esi
+    push esi                        ; Save string pointer to the stack
 
-    movzx eax, byte [logical_cursor_row]
-    imul eax, 80
-    movzx ecx, byte [cursor_col]
-    add eax, ecx
-    shl eax, 1
-    mov edi, text_buffer
-    add edi, eax
 
-    mov ah, 0x07
-    call print_string_pm
+    mov ah, 0x07                    ; White on black attribute
+    call print_string_pm            ; Print string
 
-    push esi
-    call string_length
-    pop esi
-    add byte [cursor_col], cl
+    ; Calculate string length and adjust cursor position
+    push esi                        ; Save string pointer again (before calling string_length)
+    call string_length              ; CL = string length
+    pop esi                         ; Restore string pointer
 
-    call update_cursor_row
-    call set_cursor_pm
-    mov byte [screen_dirty], 1
-    call redraw_screen
+    add byte [cursor_col], cl       ; Update column after printing the string
 
-    pop esi
+    ; Update cursor position and refresh screen
+    call update_cursor_row          ; Update cursor_row based on logical_cursor_row and scroll_offset
+    call set_cursor_pm              ; Set the cursor hardware position
+    mov byte [screen_dirty], 1      ; Mark screen as dirty (needs redraw)
+    call redraw_screen              ; Redraw the screen
+
+    pop esi                         ; Restore string pointer (cleanup)
     ret
+
 
 
 
@@ -434,70 +782,262 @@ string_length:
     pop esi
     ret
 
-
-; ----------------------------------------
-; Subroutine: print_string_pm
-; Prints string at [ESI] to [EDI] with attribute in AH
-; ----------------------------------------
 print_string_pm:
     push esi
+
 .next_char:
-    lodsb                         ; Load byte from [ESI] into AL
-    test al, al                   ; Check for null terminator
+    lodsb
+    test al, al
     jz .done
 
-    cmp al, 0x0A                  ; Check for newline
+    cmp al, 0x0A           ; Check for newline
     je .newline
 
-    mov ah, 0x07                  ; Attribute: light gray on black
-    mov [edi], ax                 ; Write character and attribute
-    add edi, 2                    ; Advance EDI by 2 bytes (char + attr)
-    inc byte [cursor_col]         ; Advance column
-    jmp .next_char
-
-.newline:
-    inc byte [logical_cursor_row]
-    mov byte [cursor_col], 0
-
-    ; Recalculate EDI for logical buffer
+    ; Calculate buffer position
     movzx eax, byte [logical_cursor_row]
-    imul eax, 80
+    imul eax, 80           ; Row * 80 chars
     movzx ecx, byte [cursor_col]
-    add eax, ecx
-    shl eax, 1
+    add eax, ecx           ; Column offset
+    shl eax, 1             ; Move to the correct buffer location
     mov edi, text_buffer
     add edi, eax
 
+    mov ah, 0x07           ; White on black attribute
+    mov [edi], ax          ; Store character at buffer location
+
+    inc byte [cursor_col]  ; Move cursor right
+    cmp byte [cursor_col], 80
+    jb .next_char
+
+    ; Wrap to next line if end of row is reached
+    mov byte [cursor_col], 0
+    inc byte [logical_cursor_row]
     jmp .next_char
 
-
+.newline:
+    inc byte [logical_cursor_row]   ; Move to next line for newline
+    mov byte [cursor_col], 0        ; Reset column
+    jmp .next_char
 
 .done:
     pop esi
     ret
 
+
+
+
+
+newline_pm:
+    ; Calculate offset = logical_cursor_row * 80 * 2
+    movzx eax, byte [logical_cursor_row]  ; Get current logical row
+    imul eax, 80                          ; Multiply by columns per row
+    shl eax, 1                            ; Multiply by 2 (bytes per cell)
+    ret
+
+
 update_cursor_row:
-    movzx eax, byte [logical_cursor_row]
-    movzx ecx, byte [scroll_offset]
-    sub eax, ecx
+    ; Update the visible cursor row (cursor_row)
+    ; based on logical_cursor_row and scroll_offset
+
+    movzx eax, byte [logical_cursor_row]  ; EAX = logical row (0–255)
+    movzx ecx, byte [scroll_offset]       ; ECX = top visible row
+
+    ; Clamp logical_cursor_row to the range [0, 24] (valid screen rows)
+    cmp eax, 0
+    jl .clamp_to_zero                    ; If logical_cursor_row < 0, clamp to 0
+    cmp eax, 24
+    jg .clamp_to_24                      ; If logical_cursor_row > 24, clamp to 24
+
+    ; If within bounds, continue processing
+    jmp .compute_cursor_row
+
+.clamp_to_zero:
+    mov byte [logical_cursor_row], 0     ; Clamp to 0 (top of the screen)
+    jmp .compute_cursor_row
+
+.clamp_to_24:
+    mov byte [logical_cursor_row], 24    ; Clamp to 24 (bottom of the screen)
+
+.compute_cursor_row:
+    sub eax, ecx                          ; EAX = logical_row - scroll_offset
+
     cmp eax, 25
-    jae .offscreen
-    mov [cursor_row], al
+    jae .offscreen                        ; Off-screen below
+
+    js .offscreen                         ; (Optional) Off-screen above, in case scroll_offset > logical row
+
+    mov [cursor_row], al                 ; Set visible cursor row
     ret
 
 .offscreen:
-    mov byte [cursor_row], 24      ; Clamp to bottom
+    mov byte [cursor_row], 24            ; Clamp to bottom of screen
     ret
 
+
+
+
+
+handle_arrow_key:
+    cmp al, 0xE0
+    jne .not_arrow
+    lodsb                ; Lire le second byte du code étendu
+
+    cmp al, 0x48         ; Flèche haut
+    je fleche_haut
+    cmp al, 0x50         ; Flèche bas
+    je fleche_bas
+    jmp .not_arrow
+
+.not_arrow:
+    ret
+
+fleche_haut:
+    cmp byte [history_view], 0
+    je .done
+    dec byte [history_view]
+    call load_history_entry
+.done:
+    ret
+
+fleche_bas:
+    mov al, [history_index]
+    dec al                      ; Last valid index
+    cmp [history_view], al
+    jae .done                   ; Already at latest command
+
+    inc byte [history_view]
+    call load_history_entry
+.done:
+    ret
+
+
+
+load_history_entry:
+    movzx esi, byte [history_view]
+    imul esi, 128
+    mov edi, command_history
+    add edi, esi
+
+    cmp byte [edi], 0
+    je .skip_load         ; Don't load if slot is empty
+
+    mov esi, edi
+    mov edi, input_buffer
+.copy_loop:
+    lodsb
+    stosb
+    test al, al
+    jnz .copy_loop
+
+.skip_load:
+    ret
+
+
+save_command:
+    movzx esi, byte [history_index]
+    imul esi, 128
+    mov edi, command_history
+    add edi, esi
+
+    mov esi, input_buffer
+.copy_loop:
+    lodsb
+    stosb
+    test al, al
+    jnz .copy_loop
+
+    inc byte [history_index]
+    cmp byte [history_index], 10
+    jb .ok
+    mov byte [history_index], 10
+.ok:
+    mov al, [history_index]
+    dec al
+    mov [history_view], al
+    ret
+
+clear_input_line:
+    ; Set cursor_col to input_start_col
+    mov al, [cmd_start_col]
+    mov [cursor_col], al
+
+    ; Calculate starting position in text_buffer
+    movzx ecx, byte [logical_cursor_row]
+    imul ecx, 80
+    movzx edx, byte [input_start_col]
+    add ecx, edx
+    shl ecx, 1
+    mov edi, text_buffer
+    add edi, ecx
+
+    ; Clear from input_start_col to end of line
+    mov cx, 80
+    movzx ax, byte [cmd_start_col]
+    sub cx, ax              ; Clear from input_start_col to end of line
+
+.clear_loop:
+    mov ax, 0x0720          ; Light gray space (no character)
+    stosw
+    loop .clear_loop
+
+    ret
+
+
+generate_divider:
+    mov ecx, 80
+    mov al, 196   ; 0xC4 in hex
+
+.next:
+    stosb
+    loop .next
+    mov byte [edi], 0
+    ret
 
 
 ; ----------------------------------------
 ; Data section (example)
 ; ----------------------------------------
+
+
+section .data
+align 512
+
+file_table:
+
+ hello:
+    db 'hello.txt', 0
+    times 16 - ($ - hello) db 0
+    dd 114                      ; start_sector
+    dd 1                          ; sector_count
+    times 8 db 0
+
+ index:
+    db 'index.txt', 0
+    times 16 - ($ - index) db 0
+    dd 115
+    dd 1
+    times 8 db 0
+
+    ; Fill remaining entries with zeros
+    times (32 * 32 - 64) db 0
+
+
+input_start_col: db 0; or whatever column your input starts at
+cmd_start_col: db 16
+command_history: times 10 db 128 dup(0)   ; 10 commandes max, 128 octets chacune
+history_index:   db 0                     ; Index où écrire la prochaine commande
+history_view:    db 0                     ; Index actuellement affiché
+current_input:   times 128 db 0           ; Buffer d’entrée courant
+
 msg_pm:
 db "ADMIN @ Guil-OS: ", 0
-text_buffer times 80 * 100 dw 0x0720  ; 100 lines of 80 chars, initialized to spaces
+text_buffer: times 8000 dw 0x0720
+cmd_cat_inline: db "-cat", 0
+msg_file_not_found: db 'Error: File not found.', 0x0A, 0
 
+FILE_TABLE_ADDR equ 0x80000
+FILE_ENTRY_SIZE equ 32
+MAX_FILES       equ 32
 
 scroll_offset db 0                   ; Current top line index
 screen_dirty db 1
@@ -507,22 +1047,13 @@ cursor_row db 0
 cursor_col db 0
 input_buffer times 512 db 0
 msg_help:
-db 0x0A
 db "  cmd:  -help <list command>", 0x0A
-db "  cmd:  -ls <list file>", 0x0A
-db 0x0A
-db 0
+db "  cmd:  -ls <list file>", 0
 msg_ls:
-db 0x0A
 db "  bootloader.bin", 0x0A
-db "  kernel.bin", 0x0A
-db 0x0A
-db 0
+db "  kernel.bin", 0
 msg_unknown:
-db 0x0A
-db "  unknow command! ", 0x0A
-db 0x0A
-db 0
+db "  unknow command! ", 0
 cmd_help_inline db "-help", 0
 cmd_ls_inline   db "-ls", 0
 
@@ -629,6 +1160,7 @@ newline:
     int 0x10
     ret
 
+
 print:
     mov ah, 0x0E
 .next_char:
@@ -640,7 +1172,6 @@ print:
 .done:
     ret
 
-; --- Messages ---
 message  db 'Kernel loaded...', 0
 message2 db 'Kernel up n running!...', 0
 ;msg_pm db "Hello from Protected Mode!", 0x0A, "Second line here.", 0
@@ -653,5 +1184,5 @@ row dw 0        ; Current row (0–24)
 col dw 0        ; Current column (0–79)
 
 ; --- Padding to 512 bytes ---
-times 51200 - ($ - $$) db 0
+times 55808 - ($ - $$) db 0
 
