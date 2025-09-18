@@ -14,9 +14,13 @@ navigation (up n down) + auto cursor repositioning at end of shell...
    
 
 -nasm -f bin -o bootloader.bin bootloader.asm
--nasm -g bin -o kernel.bin kernel.asm
+
+-nasm -f bin -o kernel.bin kernel.asm
+
 -python3 pypy.py 
+
 -qemu-system-i386 -hda os.img
+
 -qemu maybe different im on aarch_v8 pi os 64bits -qemu ...
 
 
