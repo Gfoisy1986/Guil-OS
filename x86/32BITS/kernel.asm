@@ -32,12 +32,13 @@ start:
 
 [BITS 32]
 protected_mode:
-    mov ax, DATA_SEG
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
+
+
+
+
+
+
+
 
     ; Load file table from disk
     mov eax, 111                  ; LBA start of file table
@@ -48,10 +49,11 @@ protected_mode:
     call Clear_screen
 
 .start_shell:
+
     mov esi, msg_pm
     call print_pm
-    call check_auto_scroll
-    call clear_input_buffer       ; 🧼 Clear buffer BEFORE reading
+
+
     call read_input_pm            ; Read user input
     call parse_command            ; Parse and execute
     jmp .start_shell              ; Loop back
@@ -110,6 +112,10 @@ parse_command:
 
 .handler_cat:
     call tokenize32  ; tokenize fichier label in this case file of cat(-
+
+
+    call newline_pm
+    call newline_pm
     call load_and_print_file
 
 
@@ -117,13 +123,13 @@ parse_command:
 
 
 .advance_cursor:
-    call clear_input_buffer
-    ; Move to next line
-    inc byte [logical_cursor_row]
-    mov byte [cursor_col], 0
-    call set_cursor_pm
-
-
+    xor ax, ax
+    xor bx, bx
+    xor cx, cx
+    xor dx, dx
+    xor si, si
+    xor di, di
+    xor bp, bp
 
     ret
 
@@ -136,7 +142,7 @@ tokenize32:
     ;call print_pm
     add esi, 5                ; Skip first 5 characters ("-cat ")
     ;call print_pm
-    mov ebx, esi
+
     ret
 
 tokenize:
@@ -280,15 +286,16 @@ load_and_print_file:
     mov ecx, 2                  ; Max number of entries
 
 .search_loop:
-    push esi                     ; preserve filename pointer
+
     push edi                     ; preserve current entry pointer
 
     mov edx, edi                 ; EDX = current file table entry
     call strcmp32                ; compare ESI (filename) with EDX (entry)
 
     pop edi
-    pop esi
+
     cmp al, 1
+
     je .found
 
     add edi, 32                  ; move to next entry
@@ -297,6 +304,7 @@ load_and_print_file:
 
 .not_found:
     mov si, msg_file_not_found
+
     call print_pm
     ret
 
@@ -304,21 +312,24 @@ load_and_print_file:
     ; EDI points to matching entry
     mov eax, [edi + 16]          ; start_sector
     mov ecx, [edi + 20]          ; sector_count
-    mov edi, 0x1000000
+    mov edi, db_file
 
 
 
     call read_sectors           ; Load file into memory
 
-    pop esi
-    mov esi, 0x1000000         ; Print file contents
 
 
+
+
+    mov si, db_file
+    push si
     call print_pm
+    pop si
 
 
 
-    ret
+    retf
 
 strcmp:    ;si <--
 .next_char:
@@ -361,9 +372,9 @@ clear_input_buffer:
     mov cx, 128
     mov al, 0
     rep stosb
+    rep lodsb
     xor bx, bx
     ret
-
 
 read_input_pm:
     mov si, input_buffer
@@ -605,25 +616,24 @@ draw_scrollbar:
     ret
 
 ; --- Protected Mode Print Routine ---
-print_pm:    ;  32bits print command-------------------------------
+print_pm:    ; 32-bit print command
     ; ESI = pointer to string
+    ; ECX = length of string
+
     push esi
 
     movzx eax, byte [logical_cursor_row]
     imul eax, 80
-    movzx ecx, byte [cursor_col]
-    add eax, ecx
+    movzx edx, byte [cursor_col]
+    add eax, edx
     shl eax, 1
     mov edi, text_buffer
     add edi, eax
 
     mov ah, 0x07
-    call print_string_pm
+    call print_string_pm   ; assumes ECX = length
 
-    push esi
-    call string_length
-    pop esi
-    add byte [cursor_col], cl
+    add byte [cursor_col], cl  ; update cursor column by length
 
     call update_cursor_row
     call set_cursor_pm
@@ -632,6 +642,8 @@ print_pm:    ;  32bits print command-------------------------------
 
     pop esi
     ret
+
+
 
 
 
@@ -644,7 +656,7 @@ string_length:
     lodsb
     test al, al
     jz .done
-    inc ecx
+    inc cl
     jmp .next_char
 .done:
 
@@ -721,10 +733,13 @@ update_cursor_row:
     mov byte [cursor_row], 24      ; Clamp to bottom
     ret
 
-print_esi:    ;  32bits print command-------------------------------
-    ; ESI = pointer to string
-    push esi
 
+newline_pm:
+
+ inc byte [logical_cursor_row]
+    mov byte [cursor_col], 0
+
+    ; Recalculate EDI for logical buffer
     movzx eax, byte [logical_cursor_row]
     imul eax, 80
     movzx ecx, byte [cursor_col]
@@ -732,64 +747,9 @@ print_esi:    ;  32bits print command-------------------------------
     shl eax, 1
     mov edi, text_buffer
     add edi, eax
-
-    mov ah, 0x07
-    call print_string_esi
-
-    push esi
-    call string_length_esi
-    pop esi
-    add byte [cursor_col], cl
-
-    call update_cursor_row
-    call set_cursor_pm
-    mov byte [screen_dirty], 1
-    call redraw_screen
-
-    pop esi
     ret
 
 
-print_string_esi:
-    push esi
-
-.next_char:
-    lodsb
-    test al, al
-    jz .done
-
-    cmp al, 0x0A           ; Check for newline
-    je .newline
-
-    ; Calculate buffer position
-    movzx eax, byte [logical_cursor_row]
-    imul eax, 80           ; Row * 80 chars
-    movzx ecx, byte [cursor_col]
-    add eax, ecx           ; Column offset
-    shl eax, 1             ; Move to the correct buffer location
-    mov edi, text_buffer
-    add edi, eax
-
-    mov ah, 0x07           ; White on black attribute
-    mov [edi], ax          ; Store character at buffer location
-
-    inc byte [cursor_col]  ; Move cursor right
-    cmp byte [cursor_col], 80
-    jb .next_char
-
-    ; Wrap to next line if end of row is reached
-    mov byte [cursor_col], 0
-    inc byte [logical_cursor_row]
-    jmp .next_char
-
-.newline:
-    inc byte [logical_cursor_row]   ; Move to next line for newline
-    mov byte [cursor_col], 0        ; Reset column
-    jmp .next_char
-
-.done:
-    pop esi
-    ret
 
 ; ----------------------------------------
 ; Data section (example)
@@ -808,12 +768,13 @@ file_table:
     times 8 db 0
 
  index:
-    db 'index.txt', 0
+
+    db 'index.txt',  0
     times 16 - ($ - index) db 0
     dd 115
     dd 1
     times 8 db 0
-
+    db 0
     ; Fill remaining entries with zeros
     times (32 * 32 - 64) db 0
 
@@ -846,10 +807,29 @@ db 0x0A
 db "  unknow command! ", 0x0A
 db 0x0A
 db 0
+file_length: dd 0
+
 cmd_help_inline: db "-help", 0
 cmd_ls_inline:   db "-ls", 0
 cmd_cat_inline: db "-cat", 0
-msg_file_not_found: db "Error: File not found", 0
+msg_file_not_found:
+db 0x0A
+db "Error: File not found", 0x0A
+db 0x0A
+db 0
+db_file: dd 0x00005555
+
+
+start_file:
+db 0x0A
+db "start of files", 0x0A
+db 0x0A
+db 0
+end_file:
+db 0x0A
+db "end of files", 0x0A
+db 0x0A
+db 0
 scancode_table:
     db 0    ; 0x00
     db 0    ; 0x01 - ESC
