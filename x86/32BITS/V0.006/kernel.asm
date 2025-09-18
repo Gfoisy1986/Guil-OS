@@ -103,7 +103,7 @@ parse_command:
 
 
 
-strcmp:
+strcmp:    ;si <--
 .next_char:
     mov al, [si]
     mov bl, [di]
@@ -257,7 +257,7 @@ read_input_pm:
     ret
 
 
-check_auto_scroll:
+check_auto_scroll:    ;xfer that in16 bits
     movzx eax, byte [logical_cursor_row]
     movzx ecx, byte [scroll_offset]
     sub eax, ecx
@@ -270,7 +270,7 @@ check_auto_scroll:
     ret
 
 
-set_cursor_pm:
+set_cursor_pm:   ;16bits !!
     movzx eax, byte [logical_cursor_row]
     movzx ecx, byte [scroll_offset]
     sub eax, ecx                    ; EAX = visible row
@@ -388,7 +388,7 @@ draw_scrollbar:
     ret
 
 ; --- Protected Mode Print Routine ---
-print_pm:
+print_pm:    ;  32bits print command-------------------------------
     ; ESI = pointer to string
     push esi
 
@@ -509,8 +509,8 @@ input_buffer times 512 db 0
 msg_help:
 db 0x0A
 db "  cmd:  -help <list command>", 0x0A
-db "  cmd:  -ls <list file>", 0x0A
 db 0x0A
+db "  cmd:  -ls <list file>", 0x0A
 db 0
 msg_ls:
 db 0x0A
