@@ -1,0 +1,3 @@
+# Guil-OS
+
+-Working 32 bits directory current...
