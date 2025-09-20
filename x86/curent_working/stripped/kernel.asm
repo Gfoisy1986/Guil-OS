@@ -41,10 +41,13 @@ protected_mode:
 
 
     ; Load file table from disk
-    mov eax, 111                  ; LBA start of file table
-    mov ecx, 2                    ; Number of sectors to read
-    mov edi, 0x80000              ; Destination buffer
-    call read_sectors
+    mov eax, 40                  ; LBA start
+	mov ecx, 44                  ; Number of sectors
+	mov edi, 0x18000             ; Load entire block (FAT + file table + data)
+	
+    
+	
+
 
     call Clear_screen
 
@@ -54,7 +57,7 @@ protected_mode:
     call print_pm
     
      
-
+    
     call read_input_pm            ; Read user input
     call parse_command            ; Parse and execute
     jmp .start_shell              ; Loop back
@@ -62,6 +65,8 @@ protected_mode:
 
 
 
+
+;-------------------------------------------------------------------
 
 
 parse_command:
@@ -75,9 +80,9 @@ parse_command:
     pop si
     cmp al, 1
     je .handler_help
+    
 
     ; Check for "-ls"
-
     mov di, cmd_ls_inline
     push si
     call strcmp
@@ -99,11 +104,7 @@ parse_command:
     
     
     
-    
-    
     ; Check for "-ctt"
-
-
     mov esi, input_buffer
     mov edx, cmd_ctt
     mov edi, edx
@@ -124,18 +125,21 @@ parse_command:
     push esi
     push edi
     mov ecx, 4
-    call strcmp
+    call strncmp32
     cmp al, 1
     pop esi
     pop edi
     je .handler_cc
-
+    jne .advance_cursor
 
 
     ; Unknown command
     mov si, msg_unknown
     call print_pm
     jmp .advance_cursor
+
+
+
 
 .handler_help:
     mov esi, msg_help
@@ -149,13 +153,11 @@ parse_command:
 
 .handler_tt:
     call tokenize2 ; tokenize fichier label in this case file of cat(-
-    
-    call print_pm
-
-
     call load_and_print_file2
-
     jmp .advance_cursor
+    
+    
+    
 .handler_cc:
     mov esi, file_name_ptr
     push esi
@@ -168,6 +170,8 @@ parse_command:
     call echo_to_file
     pop edi
     pop esi
+    mov esi, good_file_create
+    call print_pm
     jmp .advance_cursor
     
     
@@ -182,23 +186,26 @@ parse_command:
     call newline_pm
     call clear_input_buffer
     ret
+    
+    
+;-----------------------------------------------------------------
 file:
-			mov esi, file_name_ptr   ; pointer to "myfile.txt"
-			mov ecx, 4096            ; 4KB file
-			call create_file
-			; eax = file index or -1
+	mov esi, file_name_ptr   ; pointer to "myfile.txt"
+	mov ecx, 4096            ; 4KB file
+	call create_file
+	; eax = file index or -1
 
 tokenize2:
 	mov esi, input_buffer     ; ESI points to "-ctt hahaha"
 	add esi, 5                ; Skip "-ctt " (5 bytes)
-	call print_pm             ; Print "hahaha"
+	;call print_pm             ; Print "hahaha"
 
 
 tokenize:
     mov ebx, esi
 .loop:
     mov al, [ebx]
-    cmp al, ''
+    cmp al, ' '
     je .split
     cmp al, 0
     je .done
@@ -358,7 +365,7 @@ echo_to_file:
     mov ecx, [edi + 32]       ; .size → max bytes allowed
 
 .write_loop:
-    mov al, [esi]
+    lodsb
     cmp al, 0
     je .done
     cmp ecx, 0
@@ -425,59 +432,62 @@ strncmp32:
 
 
 load_and_print_file2:
-  ; Input: ESI = pointer to filename
-    ; Output: prints file contents to screen
+    push eax
+    push ecx
+    push edi
+    push esi
 
+    ; Find file entry by name
+    mov edi, file_table_start2
+    xor ecx, ecx
 
+.find:
+    cmp ecx, file_table_max2
+    jae .not_found
 
-
-    mov edi, file_table_start2         ; EDI = start of file table
-
-    call print_pm
-
-.search_loop:
+    mov esi, file_name_ptr
     push esi
     push edi
-    call strncmp32               ; compare ESI (filename) with EDX
+    call strcmp
     pop edi
     pop esi
     cmp al, 1
     je .found
-   
-    add di, 32     ; move to next entry
-    dec cx
-    jnz .search_loop
 
-	cmp al, 0
-    jne .not_found
-.not_found:
-    mov si, msg_file_not_found
-
-    call print_pm
-    ret
-    
+    add edi, file_entry_size2
+    inc ecx
+    jmp .find
 
 .found:
+    mov eax, [edi + 40]         ; .start_sector
+    mov ecx, [edi + 44]         ; .sector_count
+    mov edi, file_data_start    ; Destination buffer
+    call read_sectors2
 
-    mov eax, [edi + 40]       ; .start_sector
-    mov ecx, [edi + 44]       ; .sector_count
-    mov edi, db_file2         ; destination buffer
-
-
-    call read_sectors2      ; Load file into memory
-    
-    mov si, db_file2
-
+    ; Print file contents
+    mov esi, file_data_start
+.print_loop:
+    mov al, [esi]
+    cmp al, 0
+    je .done
     call print_pm
-
-    jmp .done
-
+    inc esi
+    jmp .print_loop
 
 .done:
+    call newline_pm
+    jmp .exit
 
+.not_found:
+    mov esi, msg_file_not_found
+    call print_pm
 
+.exit:
+    pop esi
+    pop edi
+    pop ecx
+    pop eax
     ret
-
 
 
 
@@ -994,12 +1004,12 @@ list_files:
     call print_pm                ; Print null-terminated name
 
     ; Print separator
-    mov esi, sep_str
-    call print_pm
+    ;mov esi, sep_str
+    ;call print_pm
 
     ; Print file size
-    mov eax, edx                 ; .size
-    call print_number        ; Print EAX as decimal
+    ;mov eax, edx                 ; .size
+    ;call print_number        ; Print EAX as decimal
 
     ; Print newline
     call newline_pm
@@ -1033,19 +1043,19 @@ create_file:
     xor eax, eax
 
 .find_slot:
-    mov edx, [edi + 32]      ; Check if .size == 0
+    mov edx, [edi + 32]      ; .size
     cmp edx, 0
     je .found_slot
-    add edi, file_entry_size
+    add edi, file_entry_size2
     inc eax
     cmp eax, file_table_max2
-    jae .fail                ; No space left
+    jae .fail
     jmp .find_slot
 
 .found_slot:
     ; Copy file name
-    mov ebx, edi             ; Save file_entry ptr
-    mov edx, 32              ; Max name length
+    mov ebx, edi
+    mov edx, 32
 .copy_name:
     mov al, [esi]
     mov [ebx], al
@@ -1059,12 +1069,33 @@ create_file:
     jmp .copy_name
 .name_done:
 
-    ; Allocate memory for file
-    mov ebx, [file_buffer_ptr]
-    mov [edi + 36], ebx      ; .ptr = file_buffer_ptr
-    mov [edi + 32], ecx      ; .size = file size
-    add ebx, ecx
-    mov [file_buffer_ptr], ebx
+    ; Allocate sectors via FAT
+    mov ecx, 1                  ; Number of sectors (for now, 1)
+    call allocate_sectors      ; Returns start sector in eax
+    cmp eax, -1
+    je .fail
+
+    mov [edi + 40], eax         ; .start_sector
+    mov [edi + 44], ecx         ; .sector_count
+    mov dword [edi + 32], 512        ; .size = 1 sector
+
+    ; Write data to sector
+    mov esi, echo_input         ; Source
+    mov edi, file_data_start    ; Temp buffer
+    mov ecx, 512
+.copy_data:
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ecx
+    jnz .copy_data
+
+    ; Write to disk
+    mov eax, [edi + 40]         ; .start_sector
+    mov ecx, 1
+    mov edi, file_data_start
+    call echo_to_file
 
     pop edi
     pop edx
@@ -1079,6 +1110,7 @@ create_file:
     ret
 
 
+
 ; Simple bump allocator
 current_ptr dd file_buffer_start
 
@@ -1088,14 +1120,62 @@ allocate_file_space:
     mov ebx, [current_ptr]
     add [current_ptr], eax
     ret
+    
+    
+    
+allocate_sectors:
+    ; Input: ecx = number of sectors
+    ; Output: eax = start sector, or -1 if failed
+
+    mov esi, fat_table_start
+    xor eax, eax              ; sector index
+    xor ebx, ebx              ; count of allocated
+    mov edx, -1               ; end marker
+
+.find:
+    cmp ebx, ecx
+    je .done
+
+    mov edi, esi
+    add edi, eax
+    shl edi, 2                ; edi = FAT[eax]
+
+    mov dword [edi], edx      ; mark as used
+    inc ebx
+    inc eax
+    jmp .find
+
+.done:
+    mov eax, 0                ; return first allocated sector
+    ret
+
+
+
+free_sectors:
+    ; Input: eax = start_sector
+.loop:
+    mov edi, fat_table_start
+    add edi, eax
+    shl edi, 2
+    mov ebx, [edi]
+    mov dword [edi], 0        ; mark as free
+    cmp ebx, -1
+    je .done
+    mov eax, ebx
+    jmp .loop
+.done:
+    ret
+
+
 
 struc file_entry
     .name         resb 32     ; offset 0
     .size         resd 1      ; offset 32
-    .ptr          resd 1      ; offset 36
+    .ptr          resd 1      ; offset 36 (optional if using sectors)
     .start_sector resd 1      ; offset 40
     .sector_count resd 1      ; offset 44
 endstruc
+
 
 
 
@@ -1119,14 +1199,20 @@ cursor_row db 0
 cursor_col db 0
 input_buffer times 512 db 0
 ; Example: Reserve 1GB starting at 0x100000
-file_buffer_start equ 0x100000
-file_buffer_end   equ file_buffer_start + 0x40000000 ; 1GB
-file_table_start2 equ 0x18000     ; Start of file table
-file_table_max2   equ 1024        ; Max number of files
+fat_table_start     equ 0x18000         ; Start of FAT table
+fat_entry_size      equ 4               ; Each FAT entry is 4 bytes
+fat_sector_count    equ 44              ; Total sectors available
+fat_table_size      equ fat_sector_count * fat_entry_size   ; 176 bytes
 
+file_table_start2   equ fat_table_start + fat_table_size    ; 0x180B0
+file_entry_size2    equ 52              ; Corrected size of file_entry
+file_table_max2     equ 128             ; Number of file entries (≈6.5 KB)
 
-file_entry_size2  equ 40          ; 32 + 4 + 4
+file_data_start     equ file_table_start2 + file_entry_size2 * file_table_max2
+
+file_buffer_start equ 0x18000
 file_buffer_ptr   dd file_buffer_start
+
 sep_str db " - ", 0
 newline_str db 13, 10, 0
 file_name_ptr: db "myflie.txt", 0
@@ -1145,6 +1231,11 @@ db 0
 msg_unknown:
 db 0x0A
 db "  unknow command! ", 0x0A
+db 0x0A
+db 0
+good_file_create:
+db 0x0A
+db "File was Created sucessfuly! ", 0x0A
 db 0x0A
 db 0
 file_length: dd 0
