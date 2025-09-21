@@ -175,16 +175,16 @@ parse_command:
    
     
   
-	;mov eax, 1          ; LBA 1 — first sector after boot
-	;mov ecx, 110        ; ~55 KB kernel
-	;mov edi, 0x8000     ; load address
-	;call read_sectors
-
-
-	mov eax, [RootDirLBA]
-	mov ecx, 1
-	mov edi, buffer
+	mov eax, 1         ; LBA 1 — first sector after boot
+	mov ecx, 100      ; ~55 KB kernel
+	mov edi, 0x8000     ; load address
 	call read_sectors
+
+
+	;mov eax, [RootDirLBA]
+	;mov ecx, 1
+	;mov edi, buffer
+	;call read_sectors
 
    
 
