@@ -1,0 +1,6 @@
+# Guil-OS
+
+- 16bits bootloader + 32bits protected_mode kernel + Shell with -help & -ls command + Auto-scrolling &
+navigation (up n down) + auto cursor repositioning at end of shell...
+
+- next FAT32 File system ! + UTF8 maybe to see! and more...

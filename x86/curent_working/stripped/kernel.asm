@@ -1,67 +1,105 @@
 [org 0x8000]            ; Kernel load address
 
-[BITS 16]
+;mov ah, 0x0E
+;mov al, '!'
+;int 0x10
+;jmp $
+buffer equ 0x90000
+data_base equ buffer + 512 * 32
+
+ReservedSectors     equ data_base + 0
+NumberOfFATs        equ data_base + 2
+FATSize32           equ data_base + 3
+RootCluster         equ data_base + 7
+SectorsPerCluster   equ data_base + 11
+FATStartLBA         equ data_base + 12
+DataStartLBA        equ data_base + 16
+RootDirLBA          equ data_base + 20
+AllocatedCluster    equ data_base + 24
+
+
+
+[bits 16]
+[default rel]
+
 global protected_mode
 
 start:
 
 
-
-    ; Print initial messages
-    mov si, message
-    call print
-    call newline
-    call newline
-
-    mov si, message2
-    call print
+	
+ 
 
     ; Switch to 32-bit protected mode
-
-    lgdt [gdt_descriptor]   ; Load Global Descriptor Table
     cli                     ; Disable interrupts
-
+    lgdt [gdt_descriptor]   ; Load Global Descriptor Table
+   
+   
     mov eax, cr0
     or eax, 1               ; Set PE bit (bit 0) to enable protected mode
     mov cr0, eax
+    
+    
 
+ 
     jmp CODE_SEG:protected_mode  ; Far jump to flush pipeline
-
 
 
 
 [BITS 32]
 protected_mode:
+  
+    mov ax, [buffer + 0x0E]
+	mov word [ReservedSectors], ax
+
+	mov al, [buffer + 0x10]
+	mov byte [NumberOfFATs], al
+
+	mov eax, [buffer + 0x24]
+	mov dword [FATSize32], eax
+
+	mov eax, [buffer + 0x2C]
+	mov dword [RootCluster], eax
+
+	mov al, [buffer + 0x0D]
+	mov byte [SectorsPerCluster], al
+
+   
+	mov eax, [RootCluster]
+	sub eax, 2
+	movzx ecx, byte [SectorsPerCluster]
+	mul ecx
+	add eax, [DataStartLBA]
+	mov dword [RootDirLBA], eax
+
+	mov eax, [RootCluster]
+	mov dword [AllocatedCluster], eax
 
 
-
-
-
-
-
-
-    ; Load file table from disk
-    mov eax, 40                  ; LBA start
-	mov ecx, 44                  ; Number of sectors
-	mov edi, 0x18000             ; Load entire block (FAT + file table + data)
-	
     
-	
-
 
     call Clear_screen
 
+
 .start_shell:
 
+    mov ax, DATA_SEG
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov esp, 0x9FF00       ; Stack top
+   
+	mov es, ax
+	mov edi, buffer         ; buffer equ 0x90000
+    
     mov esi, msg_pm
     call print_pm
-    
-     
-    
-    call read_input_pm            ; Read user input
-    call parse_command            ; Parse and execute
-    jmp .start_shell              ; Loop back
 
+    call read_input_pm
+    call parse_command
+    jmp .start_shell
 
 
 
@@ -102,35 +140,23 @@ parse_command:
     ;cmp al, 1
     ;je .handler_cat
     
+    ; Check for "-wrt"   write a new file static for now
     
-    
-    ; Check for "-ctt"
     mov esi, input_buffer
-    mov edx, cmd_ctt
+    mov edx, cmd_wrt_inline
     mov edi, edx
     mov ecx, 4
-    push esi
-    push edi
-    call strncmp32
-    pop esi
-    pop edi
-    cmp al, 1
-    je .handler_tt
-    jne .advance_cursor
-    
-    
-    ; create file
-    mov esi, input_buffer
-    mov edi, cmd_ls_create
-    push esi
-    push edi
-    mov ecx, 4
     call strncmp32
     cmp al, 1
-    pop esi
-    pop edi
-    je .handler_cc
-    jne .advance_cursor
+    je .handler_wrt
+    
+   ;Read formula
+;    DataRegionStart = PartitionStart + ReservedSectors + (NumberOfFATs × FATSize32)
+;    RootDirLBA = DataRegionStart + ((RootCluster - 2) × SectorsPerCluster)
+
+    
+    
+   
 
 
     ; Unknown command
@@ -142,6 +168,29 @@ parse_command:
 
 
 .handler_help:
+	;call calculate_root_lba
+	
+	
+
+   
+    
+  
+	;mov eax, 1          ; LBA 1 — first sector after boot
+	;mov ecx, 110        ; ~55 KB kernel
+	;mov edi, 0x8000     ; load address
+	;call read_sectors
+
+
+	mov eax, [RootDirLBA]
+	mov ecx, 1
+	mov edi, buffer
+	call read_sectors
+
+   
+
+	
+
+    
     mov esi, msg_help
     call print_pm
     jmp .advance_cursor
@@ -151,27 +200,10 @@ parse_command:
     call list_files
     jmp .advance_cursor
 
-.handler_tt:
-    call tokenize2 ; tokenize fichier label in this case file of cat(-
-    call load_and_print_file2
-    jmp .advance_cursor
+
+.handler_wrt:
     
-    
-    
-.handler_cc:
-    mov esi, file_name_ptr
-    push esi
-    call create_file
-    pop esi
-    mov esi, echo_input         ; pointer to string
-    mov edi, file_name_ptr   ; pointer to file entry
-    push esi
-    push edi
-    call echo_to_file
-    pop edi
-    pop esi
-    mov esi, good_file_create
-    call print_pm
+    call write_file
     jmp .advance_cursor
     
     
@@ -189,11 +221,313 @@ parse_command:
     
     
 ;-----------------------------------------------------------------
-file:
-	mov esi, file_name_ptr   ; pointer to "myfile.txt"
-	mov ecx, 4096            ; 4KB file
-	call create_file
-	; eax = file index or -1
+
+list_files:
+    push esi
+    push edi
+    push eax
+    push ecx
+    push edx
+
+
+	;call calculate_root_lba
+	
+	mov eax, [RootDirLBA]
+	mov ecx, [FATSize32]
+	mov edi, buffer
+	call read_sectors
+
+
+	
+	
+	
+	
+	
+
+
+    mov esi, buffer
+    xor ebx, ebx                  ; File counter
+
+.loop:
+    cmp byte [esi], 0x00          ; End of directory
+    je .check_empty
+
+    cmp byte [esi], 0xE5          ; Deleted entry
+    je .next
+
+    mov al, [esi + 0x0B]          ; DIR_Attr
+    test al, 0x18       ; Skip volume label and directory
+    jnz .next
+
+
+    ; Valid file found
+    inc ebx                       ; File counter++
+    push esi
+    mov edi, 0xB8000
+	movzx eax, bx
+	imul eax, 160         ; 80 chars × 2 bytes
+	add edi, eax
+
+
+    call print_filename
+	mov ah, 0x0F
+	mov al, 'F'
+	mov [0xB8000], ax
+
+    pop esi
+
+.next:
+    add esi, 32
+    jmp .loop
+
+.check_empty:
+    cmp ebx, 0
+    jne .done
+
+    ; No files found
+    mov esi, msg_no_files
+    call print_pm
+
+.done:
+    pop edx
+    pop ecx
+    pop eax
+    pop edi
+    pop esi
+    ret
+    
+    
+
+write_sectors:
+    ; Inputs:
+    ;   EAX = starting LBA
+    ;   ECX = number of sectors
+    ;   ESI = source buffer (file data)
+
+    pushad                     ; Save all general-purpose registers
+
+.next_sector:
+    ; Wait until disk is not busy (BSY = 0)
+.wait_bsy:
+    mov dx, 0x1F7
+    in al, dx
+    test al, 0x80
+    jnz .wait_bsy
+
+    ; Set sector count = 1
+    mov dx, 0x1F2
+    mov al, 1
+    out dx, al
+
+    ; Set LBA address
+    mov ebx, eax               ; Copy LBA
+    mov dx, 0x1F3
+    mov al, bl
+    out dx, al
+    mov dx, 0x1F4
+    mov al, bh
+    out dx, al
+    shr ebx, 16
+    mov dx, 0x1F5
+    mov al, bl
+    out dx, al
+    mov dx, 0x1F6
+    mov al, bh
+    and al, 0x0F
+    or al, 0xE0                ; LBA mode + master drive
+    out dx, al
+
+    ; Issue WRITE SECTORS command (0x30)
+    mov dx, 0x1F7
+    mov al, 0x30
+    out dx, al
+
+    ; Wait for DRQ (bit 3) with timeout
+    mov cx, 10000
+.wait_drq:
+    mov dx, 0x1F7
+    in al, dx
+    test al, 0x08
+    jnz .drq_ready
+    loop .wait_drq
+    jmp .error
+
+.drq_ready:
+    ; Write 256 words (512 bytes)
+    mov cx, 256
+    mov dx, 0x1F0
+.write_loop:
+    lodsw                     ; Load word from [ESI] into AX
+    out dx, ax                ; Write word to disk
+    loop .write_loop
+
+    ; Advance to next sector
+    inc eax                   ; Next LBA
+    add esi, 512              ; Advance buffer
+    dec ecx
+    jnz .next_sector
+
+.done:
+    popad
+    ret
+
+.error:
+    ; Optional: show error marker
+    mov ah, 0x0C
+    mov al, 'W'
+    mov [0xB8000], ax
+    jmp $
+
+
+
+
+
+write_file:
+    pushad
+
+    ; Step 1: Read FAT and find a free cluster
+    mov eax, [FATStartLBA]
+    mov ecx, [FATSize32]
+    mov edi, buffer
+    call read_sectors
+
+    mov esi, msg_help ;buffer
+    ;xor ebx, ebx               ; Cluster index
+		
+	
+	
+    call print_pm
+    ret
+.find_free_cluster:
+    mov eax, [esi]
+    cmp eax, 0x00000000
+    je .cluster_found
+    add esi, 4
+    inc ebx
+    cmp ebx, 0x0FFFFFF0
+    jl .find_free_cluster
+    jmp .no_free_cluster
+
+.cluster_found:
+    mov [AllocatedCluster], ebx
+
+    ; Step 2: Write file data to allocated cluster
+    mov eax, ebx               ; AllocatedCluster
+    sub eax, 2
+    movzx edx, byte [SectorsPerCluster]
+    imul eax, edx
+    add eax, [DataStartLBA]
+    mov ecx, edx
+    mov edi, file_buffer
+    call write_sectors
+
+    ; Step 3: Update FAT entry to mark cluster as EOF
+    mov eax, [AllocatedCluster]
+    shl eax, 2                 ; FAT32 entry = cluster × 4
+    mov esi, buffer
+    add esi, eax
+    mov dword [esi], 0x0FFFFFFF
+
+    ; Step 4: Write updated FAT to all copies
+    mov eax, [FATStartLBA]
+    movzx ebx, byte [NumberOfFATs]
+    
+    mov ah, 0x0F
+	mov al, 'C'
+	mov [0xB8000], ax
+
+.write_fat_copies:
+    mov ecx, [FATSize32]
+    mov esi, buffer
+    call write_sectors
+    add eax, ecx
+    dec ebx
+    jnz .write_fat_copies
+
+    ; Step 5: Add directory entry
+    mov eax, [RootDirLBA]
+    movzx ecx, byte [SectorsPerCluster]
+    mov edi, buffer
+    call read_sectors
+
+    mov esi, buffer
+.find_dir_slot:
+    cmp byte [esi], 0x00
+    je .write_dir_entry
+    cmp byte [esi], 0xE5
+    je .write_dir_entry
+    add esi, 32
+    jmp .find_dir_slot
+
+.write_dir_entry:
+    ; Copy filename (11 bytes)
+    mov edi, filename
+    mov ecx, 11
+.copy_name_loop:
+    mov al, [edi]
+    mov [esi], al
+    inc edi
+    inc esi
+    loop .copy_name_loop
+
+    ; Set archive attribute
+    mov byte [esi], 0x20
+    add esi, 9                 ; Move to offset 20
+
+    ; Write cluster number
+    mov ax, [AllocatedCluster]
+    mov [esi], ax             ; Cluster low
+    add esi, 2
+    shr eax, 16
+    mov [esi], ax             ; Cluster high
+    add esi, 2
+
+    ; Write file size
+    mov eax, [FileSize]
+    mov [esi], eax
+
+    ; Write updated directory entry
+    mov eax, [RootDirLBA]
+    movzx ecx, byte [SectorsPerCluster]
+    mov esi, buffer
+    call write_sectors
+
+.no_free_cluster:
+    popad
+    ret
+
+
+
+
+
+
+dump_buffer_to_vga:
+    mov esi, buffer          ; Source: FAT32 buffer
+    mov edi, 0xB8000         ; VGA text memory
+    mov ecx, 512             ; Number of bytes to display
+
+.dump_loop:
+    mov al, [esi]            ; Load byte
+    cmp al, 0x20             ; Is it printable?
+    jb .dot
+    cmp al, 0x7E             ; Is it <= '~'?
+    ja .dot
+
+    mov ah, 0x07             ; Attribute: light gray on black
+    mov [edi], ax
+    jmp .next
+
+.dot:
+    mov ax, 0x072E           ; '.' character with attribute
+    mov [edi], ax
+
+.next:
+    add edi, 2               ; Advance VGA memory
+    inc esi
+    loop .dump_loop
+    ret
+
+
 
 tokenize2:
 	mov esi, input_buffer     ; ESI points to "-ctt hahaha"
@@ -218,138 +552,122 @@ tokenize:
 .done:
     ret
 
-read_sectors2:
-    ; Inputs:
-    ;   EAX = LBA sector number
-    ;   ECX = number of sectors to read
-    ;   EDI = destination address
-
-    push eax
-    push ecx
-
-.next_sector:
-
-    mov ebx, eax            ; Copy LBA
-    mov dx, 0x1F2
-    mov al, 1
-    out dx, al
-
-    mov dx, 0x1F3
-    mov al, bl
-    out dx, al
-
-    mov dx, 0x1F4
-    mov al, bh
-    out dx, al
-
-    mov edx, eax
-    shr edx, 16
-
-    mov dx, 0x1F5
-    mov al, dl
-    out dx, al
-
-    mov dx, 0x1F6
-    mov al, 0xE0
-    or al, dh
-    out dx, al
-
-    mov dx, 0x1F7
-    mov al, 0x20
-    out dx, al
-
-.wait_drq:
-    mov dx, 0x1F7
-    in al, dx
-    test al, 0x08
-    jz .wait_drq
-
-    mov cx, 256
-    mov dx, 0x1F0
-.read_loop:
-    in ax, dx
-    stosw
-    loop .read_loop
-    pop eax
-    pop ecx
-    dec ecx
-    jz .done
-
-    inc eax
-    add edi, 512
-    jmp .next_sector
-
-.done:
-
-    ret
-
 
 
 
 read_sectors:
-    ; Inputs:
-    ;   EAX = LBA sector number
-    ;   ECX = number of sectors to read
-    ;   EDI = destination address in memory
+    ; Inputs: EAX = starting LBA, ECX = number of sectors, EDI = buffer
+    ; Output: read_status = 0 (success), 1 (error)
+
+    pushad
+
+    mov byte [read_status], 0         ; Assume success
 
 .next_sector:
-    push eax
-    push ecx
+    ; Wait for BSY to clear
+    mov dx, 0x1F7
+    mov si, 10000
+.wait_bsy:
+    in al, dx
+    test al, 0x80                     ; BSY bit
+    jz .bsy_clear
+    dec si
+    jnz .wait_bsy
 
-    ; Extract LBA bytes
-    mov ebx, eax
-    mov dx, 0x1F2         ; Sector count
+    ; BSY timeout
+    mov esi, msg_error_bsy
+    call print_pm
+    mov byte [read_status], 1
+    jmp .fail
+
+.bsy_clear:
+    ; Set sector count to 1
+    mov dx, 0x1F2
     mov al, 1
     out dx, al
+    jmp $+2
 
-    mov dx, 0x1F3         ; LBA bits 0–7
+    ; Send LBA (28-bit)
+    mov ebx, eax                      ; Copy LBA
+    mov dx, 0x1F3
     mov al, bl
     out dx, al
-
-    mov dx, 0x1F4         ; LBA bits 8–15
+    mov dx, 0x1F4
     mov al, bh
     out dx, al
-
     shr ebx, 16
-    mov dx, 0x1F5         ; LBA bits 16–23
+    mov dx, 0x1F5
     mov al, bl
     out dx, al
-
-    mov dx, 0x1F6         ; Drive/head + LBA bits 24–27
-    mov al, 0xE0
-    or al, bh             ; LBA bits 24–27
+    mov dx, 0x1F6
+    mov al, bh
+    and al, 0x0F                      ; Mask upper 4 bits
+    or al, 0xE0                       ; Set LBA mode + drive 0
     out dx, al
 
-    mov dx, 0x1F7         ; Command port
-    mov al, 0x20          ; Read sectors (PIO)
+    ; Issue READ SECTORS command
+    mov dx, 0x1F7
+    mov al, 0x20
     out dx, al
 
-.wait:
+    ; Wait for DRQ to set
+    mov si, 10000
+.wait_drq:
     mov dx, 0x1F7
     in al, dx
+    test al, 0x08
+    jnz .drq_ready
+    dec si
+    jnz .wait_drq
 
-    test al, 0x08         ; DRQ bit
-    jz .wait
 
-    ; Read 256 words (512 bytes)
+.drq_ready:
+    ; Read 512 bytes (256 words)
     mov cx, 256
-    mov dx, 0x1F0
+
 .read_loop:
-    in ax, dx
-    stosw
+    mov dx, 0x1F0
+	in ax, dx
+	stosw
+
     loop .read_loop
 
-    pop ecx
-    pop eax
-    dec ecx
-    jz .done
 
-    inc eax               ; Next LBA sector
-    add edi, 512          ; Advance buffer
-    jmp .next_sector
+    ; Advance to next sector
+    inc eax                           ; Next LBA
+    add edi, 512                      ; Next buffer offset
+    dec ecx
+    jnz .next_sector
+
+    mov esi, msg_read_done
+    call print_pm
+    jmp .done
+
+.fail:
+    mov ah, 0x0E
+    mov al, 'F'
+    int 0x10
+    mov esi, msg_read_failed
+    call print_pm
+    mov byte [read_status], 1
+    ret
+
 
 .done:
+    popad
     ret
+
+
+
+
+
+
+
+
+
+
+
+
 
 echo_to_file:
     ; Inputs:
@@ -431,89 +749,11 @@ strncmp32:
     ret
 
 
-load_and_print_file2:
-    push eax
-    push ecx
-    push edi
-    push esi
-
-    ; Find file entry by name
-    mov edi, file_table_start2
-    xor ecx, ecx
-
-.find:
-    cmp ecx, file_table_max2
-    jae .not_found
-
-    mov esi, file_name_ptr
-    push esi
-    push edi
-    call strcmp
-    pop edi
-    pop esi
-    cmp al, 1
-    je .found
-
-    add edi, file_entry_size2
-    inc ecx
-    jmp .find
-
-.found:
-    mov eax, [edi + 40]         ; .start_sector
-    mov ecx, [edi + 44]         ; .sector_count
-    mov edi, file_data_start    ; Destination buffer
-    call read_sectors2
-
-    ; Print file contents
-    mov esi, file_data_start
-.print_loop:
-    mov al, [esi]
-    cmp al, 0
-    je .done
-    call print_pm
-    inc esi
-    jmp .print_loop
-
-.done:
-    call newline_pm
-    jmp .exit
-
-.not_found:
-    mov esi, msg_file_not_found
-    call print_pm
-
-.exit:
-    pop esi
-    pop edi
-    pop ecx
-    pop eax
-    ret
 
 
 
-strcmptt:    ;si <--
-.next_char:
 
-    mov al, cmd_ctt
-    mov bl, [di]
-    cmp al, bl
-    jne .not_equal
-    test al, al
-    je .check_end
-    inc si
-    inc di
-    jmp .next_char
 
-.check_end:
-    mov al, [di]
-    test al, al
-    jne .not_equal
-    mov al, 1
-    ret
-
-.not_equal:
-    mov al, 0
-    ret
 
 
 strcmp:    ;si <--
@@ -868,6 +1108,31 @@ string_length_esi:
 ; Subroutine: print_string_pm
 ; Prints string at [ESI] to [EDI] with attribute in AH
 ; ----------------------------------------
+print_filename:
+    push esi
+    push edi
+    push ecx
+    push ax
+
+    mov ecx, 11              ; FAT32 filename is 11 bytes (8 + 3)
+.print_loop:
+    mov al, [esi]            ; Load character from filename
+    cmp al, 0x20             ; Optional: skip leading spaces
+    jb .skip_char
+    mov ah, 0x0F             ; White on black
+    stosw                    ; Write to VGA
+.skip_char:
+    inc esi
+    loop .print_loop
+
+    pop ax
+    pop ecx
+    pop edi
+    pop esi
+    ret
+
+
+
 print_string_pm:
     push esi
 .next_char:
@@ -977,204 +1242,32 @@ print_number:
     ret
 
 
-; Inputs:
-;   esi = pointer to null-terminated file name
-;   ecx = file size in bytes
-; Outputs:
-list_files:
-    push esi
-    push edi
-    push eax
-    push ecx
-    push edx
+;--------------------------------------------------------------------
+calculate_root_lba:
+    ; Step 1: Calculate DataStartLBA
+    mov eax, [FATSize32]
+    movzx ebx, byte [NumberOfFATs]
+    imul eax, ebx                 ; eax = FATSize32 × NumberOfFATs
+    add eax, [ReservedSectors]   ; eax = Reserved + FATs
+    add eax, [PartitionStart]    ; eax = DataStartLBA
 
-    mov edi, file_table_start2   ; Start of file table
-    xor ecx, ecx                 ; File index = 0
+    ; Step 2: Calculate RootDirLBA
+    movzx ebx, byte [SectorsPerCluster]
+    mov ecx, [RootCluster]
+    sub ecx, 2
+    imul ecx, ebx                 ; ecx = (RootCluster - 2) × SectorsPerCluster
+    add eax, ecx                  ; eax = RootDirLBA
 
-.loop:
-    cmp ecx, file_table_max2     ; Reached max entries?
-    jae .done                    ; If yes, exit
-
-    mov edx, [edi + 32]          ; Load .size
-    cmp edx, 0
-    je .next                     ; Skip empty entry
-
-    ; Print file name
-    mov esi, edi                 ; .name pointer
-    call print_pm                ; Print null-terminated name
-
-    ; Print separator
-    ;mov esi, sep_str
-    ;call print_pm
-
-    ; Print file size
-    ;mov eax, edx                 ; .size
-    ;call print_number        ; Print EAX as decimal
-
-    ; Print newline
-    call newline_pm
-
-.next:
-    add edi, file_entry_size2    ; Move to next entry
-    inc ecx                      ; Increment index
-    jmp .loop
-
-.done:
-    pop edx
-    pop ecx
-    pop eax
-    pop edi
-    pop esi
+    mov [RootDirLBA], eax
     ret
 
 
-  
-
-
-
-
-create_file:
-    push ebx
-    push edx
-    push edi
-
-    ; Find empty slot in file table
-    mov edi, file_table_start2
-    xor eax, eax
-
-.find_slot:
-    mov edx, [edi + 32]      ; .size
-    cmp edx, 0
-    je .found_slot
-    add edi, file_entry_size2
-    inc eax
-    cmp eax, file_table_max2
-    jae .fail
-    jmp .find_slot
-
-.found_slot:
-    ; Copy file name
-    mov ebx, edi
-    mov edx, 32
-.copy_name:
-    mov al, [esi]
-    mov [ebx], al
-    inc esi
-    inc ebx
-    dec edx
-    test al, al
-    je .name_done
-    cmp edx, 0
-    je .name_done
-    jmp .copy_name
-.name_done:
-
-    ; Allocate sectors via FAT
-    mov ecx, 1                  ; Number of sectors (for now, 1)
-    call allocate_sectors      ; Returns start sector in eax
-    cmp eax, -1
-    je .fail
-
-    mov [edi + 40], eax         ; .start_sector
-    mov [edi + 44], ecx         ; .sector_count
-    mov dword [edi + 32], 512        ; .size = 1 sector
-
-    ; Write data to sector
-    mov esi, echo_input         ; Source
-    mov edi, file_data_start    ; Temp buffer
-    mov ecx, 512
-.copy_data:
-    mov al, [esi]
-    mov [edi], al
-    inc esi
-    inc edi
-    dec ecx
-    jnz .copy_data
-
-    ; Write to disk
-    mov eax, [edi + 40]         ; .start_sector
-    mov ecx, 1
-    mov edi, file_data_start
-    call echo_to_file
-
-    pop edi
-    pop edx
-    pop ebx
-    ret
-
-.fail:
-    mov eax, -1
-    pop edi
-    pop edx
-    pop ebx
-    ret
-
-
-
-; Simple bump allocator
-current_ptr dd file_buffer_start
-
-allocate_file_space:
-    ; Input: size in eax
-    ; Output: pointer in ebx
-    mov ebx, [current_ptr]
-    add [current_ptr], eax
-    ret
     
-    
-    
-allocate_sectors:
-    ; Input: ecx = number of sectors
-    ; Output: eax = start sector, or -1 if failed
-
-    mov esi, fat_table_start
-    xor eax, eax              ; sector index
-    xor ebx, ebx              ; count of allocated
-    mov edx, -1               ; end marker
-
-.find:
-    cmp ebx, ecx
-    je .done
-
-    mov edi, esi
-    add edi, eax
-    shl edi, 2                ; edi = FAT[eax]
-
-    mov dword [edi], edx      ; mark as used
-    inc ebx
-    inc eax
-    jmp .find
-
-.done:
-    mov eax, 0                ; return first allocated sector
-    ret
 
 
-
-free_sectors:
-    ; Input: eax = start_sector
-.loop:
-    mov edi, fat_table_start
-    add edi, eax
-    shl edi, 2
-    mov ebx, [edi]
-    mov dword [edi], 0        ; mark as free
-    cmp ebx, -1
-    je .done
-    mov eax, ebx
-    jmp .loop
-.done:
-    ret
+section .data 
 
 
-
-struc file_entry
-    .name         resb 32     ; offset 0
-    .size         resd 1      ; offset 32
-    .ptr          resd 1      ; offset 36 (optional if using sectors)
-    .start_sector resd 1      ; offset 40
-    .sector_count resd 1      ; offset 44
-endstruc
 
 
 
@@ -1185,8 +1278,15 @@ endstruc
 ; Data section (example)
 ; ----------------------------------------
 
+PartitionStart dd 204800
 
-echo_input: db "heya this is good", 0
+
+
+
+
+
+
+
 msg_pm: db "ADMIN @ Guil-OS: ", 0
 text_buffer: times 8000 dw 0x0720
 
@@ -1198,24 +1298,23 @@ current_input:   times 128 db 0           ; Buffer d’entrée courant
 cursor_row db 0
 cursor_col db 0
 input_buffer times 512 db 0
-; Example: Reserve 1GB starting at 0x100000
-fat_table_start     equ 0x18000         ; Start of FAT table
-fat_entry_size      equ 4               ; Each FAT entry is 4 bytes
-fat_sector_count    equ 44              ; Total sectors available
-fat_table_size      equ fat_sector_count * fat_entry_size   ; 176 bytes
 
-file_table_start2   equ fat_table_start + fat_table_size    ; 0x180B0
-file_entry_size2    equ 52              ; Corrected size of file_entry
-file_table_max2     equ 128             ; Number of file entries (≈6.5 KB)
 
-file_data_start     equ file_table_start2 + file_entry_size2 * file_table_max2
 
-file_buffer_start equ 0x18000
-file_buffer_ptr   dd file_buffer_start
+read_status: db 0    ; 0 = success, 1 = error
 
-sep_str db " - ", 0
-newline_str db 13, 10, 0
-file_name_ptr: db "myflie.txt", 0
+
+FileSize            dd 11
+filename            db 'HELLO   TXT'      ; 11 bytes, 8.3 format
+file_buffer         times 512 db 'hello world', 0
+
+
+msg_error_bsy:     db "ERROR: Disk BSY timeout", 0
+msg_error_drq:     db "ERROR: Disk DRQ timeout", 0
+msg_read_failed:   db "ERROR: Read failed", 0
+msg_read_done:     db "Read complete", 0
+
+
 msg_help:
 db 0x0A
 db "  cmd:  -help <list command>", 0x0A
@@ -1233,16 +1332,13 @@ db 0x0A
 db "  unknow command! ", 0x0A
 db 0x0A
 db 0
-good_file_create:
-db 0x0A
-db "File was Created sucessfuly! ", 0x0A
-db 0x0A
-db 0
+
 file_length: dd 0
 
 cmd_help_inline: db "-help", 0
 cmd_ls_inline:   db "-ls", 0
 cmd_cat_inline: db "-cat", 0
+cmd_wrt_inline: db "-wrt", 0
 cmd_ctt: db "-ctt", 0
 cmd_ls_create: db "-crt", 0
 msg_file_not_found:
@@ -1250,20 +1346,16 @@ db 0x0A
 db "Error: File not found", 0x0A
 db 0x0A
 db 0
-db_file: dd 0x00005555
-db_file2: dd 0x18000
+msg_no_files:
+    db 0x0A
+    db "No files on disk", 0x0A
+    db 0
 
 
-start_file:
-db 0x0A
-db "start of files", 0x0A
-db 0x0A
-db 0
-end_file:
-db 0x0A
-db "end of files", 0x0A
-db 0x0A
-db 0
+
+
+
+
 scancode_table:
     db 0    ; 0x00
     db 0    ; 0x01 - ESC
@@ -1326,10 +1418,13 @@ scancode_table:
 
 
 
+
 [BITS 16]
 ; --- Global Descriptor Table ---
 
+align 16
 gdt_start:
+
 
 gdt_null:                  ; Null descriptor (required)
     dd 0x00000000
