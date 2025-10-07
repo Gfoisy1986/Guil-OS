@@ -135,32 +135,46 @@ print:
 
 section .data
     errmsg db 'Disk read failed!', 0
-	msgk db 'loading kernel   ', 0
-	msgk2 db 'jmp to protected mode done...   ', 0
-	
+    msgk db 'loading kernel   ', 0
+    msgk2 db 'jmp to protected mode done...   ', 0
+
     buffer db 512 dup(0) ; reserve 512 bytes for boot sector
-    
-	SectorsPerCluster   db    0x0D
-	ReservedSectors     dw    0x0E
-	NumberOfFATs        db    0x10
-	FATSize32           dd    0x24
-	RootCluster         dd    0x2C
 
-	BytesPerSector dw 0x0B
-
-
+    ; FAT32 Boot Sector Parameters
+    BytesPerSector      dw    0x0200      ; 512 bytes per sector
+    SectorsPerCluster   db    0x08        ; 8 sectors per cluster (4 KB clusters)
+    ReservedSectors     dw    0x3190      ; 202752 sectors = 99 MB
+    NumberOfFATs        db    0x02        ; standard for FAT32
+    FATSize32           dd    0x00004000  ; 16384 sectors per FAT (8 MB per FAT)
+    RootCluster         dd    0x00000002  ; root directory starts at cluster 2
 
 
 	
 section .text
-    mov ax, [buffer + 0x0B] ; BytesPerSector
-    mov cl, [buffer + 0x0D] ; SectorsPerCluster
-    mov ax, [buffer + 0x0E] ; ReservedSectors
-    mov cl, [buffer + 0x10] ; NumberOfFATs
-    mov eax, [buffer + 0x24] ; FATSize32
-    mov eax, [buffer + 0x2C] ; RootCluster
-    
-	
+    ; Load BytesPerSector (offset 0x0B, 2 bytes)
+    mov ax, [buffer + 0x0B]
+    mov [BytesPerSector], ax
+
+    ; Load SectorsPerCluster (offset 0x0D, 1 byte)
+    mov al, [buffer + 0x0D]
+    mov [SectorsPerCluster], al
+
+    ; Load ReservedSectors (offset 0x0E, 2 bytes)
+    mov ax, [buffer + 0x0E]
+    mov [ReservedSectors], ax
+
+    ; Load NumberOfFATs (offset 0x10, 1 byte)
+    mov al, [buffer + 0x10]
+    mov [NumberOfFATs], al
+
+    ; Load FATSize32 (offset 0x24, 4 bytes)
+    mov eax, [buffer + 0x24]
+    mov [FATSize32], eax
+
+    ; Load RootCluster (offset 0x2C, 4 bytes)
+    mov eax, [buffer + 0x2C]
+    mov [RootCluster], eax
+
 
 
 times 510 - ($ - $$) db 0

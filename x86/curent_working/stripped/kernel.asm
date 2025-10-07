@@ -27,7 +27,7 @@ global protected_mode
 start:
 
 
-	
+
  
 
     ; Switch to 32-bit protected mode
@@ -75,8 +75,19 @@ protected_mode:
 	mov eax, [RootCluster]
 	mov dword [AllocatedCluster], eax
 
+     ; FATStartLBA = ReservedSectors
+    movzx eax, word [ReservedSectors]
+    mov dword [FATStartLBA], eax
 
+    ; DataStartLBA = ReservedSectors + (NumberOfFATs * FATSize32)
+    movzx eax, word [ReservedSectors]
+    movzx ebx, byte [NumberOfFATs]
+    mov ecx, [FATSize32]
+    mul ebx                    ; eax = FATSize32 * NumberOfFATs
+    add eax, ecx               ; eax = ReservedSectors + FATs
+    mov dword [DataStartLBA], eax
     
+    ;RootDirLBA = DataStartLBA + ((RootCluster - 2) * SectorsPerCluster)
 
     call Clear_screen
 
@@ -175,9 +186,9 @@ parse_command:
    
     
   
-	mov eax, 1         ; LBA 1 — first sector after boot
-	mov ecx, 100      ; ~55 KB kernel
-	mov edi, 0x8000     ; load address
+	mov eax, 1      ; LBA x fat32 sector
+    mov ecx, 100
+	mov edi, buffer
 	call read_sectors
 
 
@@ -232,7 +243,7 @@ list_files:
 
 	;call calculate_root_lba
 	
-	mov eax, [RootDirLBA]
+	mov eax, [FATStartLBA]
 	mov ecx, [FATSize32]
 	mov edi, buffer
 	call read_sectors
@@ -301,7 +312,7 @@ list_files:
 write_sectors:
     ; Inputs:
     ;   EAX = starting LBA
-    ;   ECX = number of sectors
+    ;   ECX = number of sectors to write
     ;   ESI = source buffer (file data)
 
     pushad                     ; Save all general-purpose registers
@@ -309,9 +320,9 @@ write_sectors:
 .next_sector:
     ; Wait until disk is not busy (BSY = 0)
 .wait_bsy:
-    mov dx, 0x1F7
+    mov dx, 0x1F7              ; Status register
     in al, dx
-    test al, 0x80
+    test al, 0x80              ; Check BSY bit
     jnz .wait_bsy
 
     ; Set sector count = 1
@@ -319,7 +330,7 @@ write_sectors:
     mov al, 1
     out dx, al
 
-    ; Set LBA address
+    ; Set LBA address (28-bit)
     mov ebx, eax               ; Copy LBA
     mov dx, 0x1F3
     mov al, bl
@@ -333,8 +344,8 @@ write_sectors:
     out dx, al
     mov dx, 0x1F6
     mov al, bh
-    and al, 0x0F
-    or al, 0xE0                ; LBA mode + master drive
+    and al, 0x0F               ; Mask upper bits
+    or al, 0xE0                ; Set LBA mode + master drive
     out dx, al
 
     ; Issue WRITE SECTORS command (0x30)
@@ -347,7 +358,7 @@ write_sectors:
 .wait_drq:
     mov dx, 0x1F7
     in al, dx
-    test al, 0x08
+    test al, 0x08              ; Check DRQ bit
     jnz .drq_ready
     loop .wait_drq
     jmp .error
@@ -355,7 +366,7 @@ write_sectors:
 .drq_ready:
     ; Write 256 words (512 bytes)
     mov cx, 256
-    mov dx, 0x1F0
+    mov dx, 0x1F0              ; Data port
 .write_loop:
     lodsw                     ; Load word from [ESI] into AX
     out dx, ax                ; Write word to disk
@@ -376,7 +387,8 @@ write_sectors:
     mov ah, 0x0C
     mov al, 'W'
     mov [0xB8000], ax
-    jmp $
+    popad
+    ret
 
 
 
@@ -385,19 +397,15 @@ write_sectors:
 write_file:
     pushad
 
-    ; Step 1: Read FAT and find a free cluster
+    ; Step 1: Read FAT to find a free cluster
     mov eax, [FATStartLBA]
-    mov ecx, [FATSize32]
+    mov ecx, 100                  ; Read first 100 sectors of FAT
     mov edi, buffer
     call read_sectors
 
-    mov esi, msg_help ;buffer
-    ;xor ebx, ebx               ; Cluster index
-		
-	
-	
-    call print_pm
-    ret
+    mov esi, buffer              ; Start scanning FAT
+    xor ebx, ebx                 ; Cluster index
+
 .find_free_cluster:
     mov eax, [esi]
     cmp eax, 0x00000000
@@ -412,18 +420,18 @@ write_file:
     mov [AllocatedCluster], ebx
 
     ; Step 2: Write file data to allocated cluster
-    mov eax, ebx               ; AllocatedCluster
+    mov eax, ebx                 ; AllocatedCluster
     sub eax, 2
     movzx edx, byte [SectorsPerCluster]
-    imul eax, edx
-    add eax, [DataStartLBA]
-    mov ecx, edx
-    mov edi, file_buffer
+    imul eax, edx                ; Cluster offset in sectors
+    add eax, [DataStartLBA]      ; Convert to LBA
+    mov ecx, edx                 ; Number of sectors to write
+    mov esi, file_buffer         ; Source buffer
     call write_sectors
 
     ; Step 3: Update FAT entry to mark cluster as EOF
     mov eax, [AllocatedCluster]
-    shl eax, 2                 ; FAT32 entry = cluster × 4
+    shl eax, 2                   ; FAT32 entry = cluster × 4
     mov esi, buffer
     add esi, eax
     mov dword [esi], 0x0FFFFFFF
@@ -431,10 +439,6 @@ write_file:
     ; Step 4: Write updated FAT to all copies
     mov eax, [FATStartLBA]
     movzx ebx, byte [NumberOfFATs]
-    
-    mov ah, 0x0F
-	mov al, 'C'
-	mov [0xB8000], ax
 
 .write_fat_copies:
     mov ecx, [FATSize32]
@@ -451,6 +455,7 @@ write_file:
     call read_sectors
 
     mov esi, buffer
+
 .find_dir_slot:
     cmp byte [esi], 0x00
     je .write_dir_entry
@@ -472,19 +477,19 @@ write_file:
 
     ; Set archive attribute
     mov byte [esi], 0x20
-    add esi, 9                 ; Move to offset 20
+    add esi, 15                 ; Move to offset 26
 
     ; Write cluster number
     mov ax, [AllocatedCluster]
-    mov [esi], ax             ; Cluster low
+    mov [esi], ax              ; Cluster low (offset 26)
     add esi, 2
     shr eax, 16
-    mov [esi], ax             ; Cluster high
+    mov [esi], ax              ; Cluster high (offset 20)
     add esi, 2
 
     ; Write file size
     mov eax, [FileSize]
-    mov [esi], eax
+    mov [esi], eax             ; Offset 28
 
     ; Write updated directory entry
     mov eax, [RootDirLBA]
@@ -492,7 +497,14 @@ write_file:
     mov esi, buffer
     call write_sectors
 
+    popad
+    ret
+
 .no_free_cluster:
+    ; Optional: show error marker
+    mov ah, 0x0C
+    mov al, 'F'
+    mov [0xB8000], ax
     popad
     ret
 
@@ -1484,6 +1496,8 @@ DATA_SEG equ 0x10
 
 row dw 0        ; Current row (0–24)
 col dw 0        ; Current column (0–79)
+
+
 
 ; --- Padding to 512 bytes ---
 times 55808 - ($ - $$) db 0
