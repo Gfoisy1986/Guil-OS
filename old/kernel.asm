@@ -1350,7 +1350,20 @@ isr_keyboard:
     out 0x20, al
     iretd
     
-    
+get_key_pm:
+    movzx ecx, byte [keyboard_tail]
+    movzx edx, byte [keyboard_head]
+    cmp ecx, edx
+    je .no_key
+
+    mov al, [keyboard_buf + ecx]
+    inc byte [keyboard_tail]
+    and byte [keyboard_tail], 127
+    ret
+
+.no_key:
+    xor al, al
+    ret   
       
 [BITS 16]
 ; --- Global Descriptor Table ---

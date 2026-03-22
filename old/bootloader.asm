@@ -1,62 +1,72 @@
-; bootloader.asm
+; ================================
+; Guil-OS Bootloader (Stage 1)
+; ================================
 [org 0x7C00]
 
-mov ah, 0x0E         ; BIOS teletype output
+    cli                     ; Désactive interruptions
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7C00          ; Stack simple (évite écraser bootloader)
 
-mov ax, 0x0000
-mov ds, ax
-mov si, msgk
+    mov ah, 0x0E
+    mov si, msg_loading
+    call print
 
+; ================================
+; Lecture du kernel (126 secteurs)
+; ================================
+    mov bx, 0x8000          ; Adresse de chargement du kernel
+    mov dh, 0               ; Head
+    mov dl, 0x80            ; Disque dur principal
+    mov ch, 0               ; Cylinder
+    mov cl, 2               ; Secteur 2
+    mov ah, 0x02            ; Fonction BIOS: lire secteurs
+    mov al, 126             ; Nombre de secteurs à lire
+    int 0x13
+    jc disk_error
 
+; ================================
+; Jump vers le kernel
+; ================================
+    cli
+    jmp 0x0000:0x8000       ; Jump far vers kernel
 
-call print
-call newline
-; Load kernel (assumes it's at sector 2)
-mov bx, 0x8000       ; Load address for kernel
-mov dh, 0            ; Head
-mov dl, 0x80         ; First hard disk
-mov ch, 0            ; Cylinder
-mov cl, 2            ; Sector 2
-mov ah, 2            ; Read sectors
-mov al, 126       ; Number of sectors
-int 0x13
-jc disk_error         ; Jump if carry flag is set (error)
-
-
-
-
-jmp 0x0000:0x8000    ; Jump to kernel
-
+; ================================
+; Routines utilitaires
+; ================================
+print:
+    mov ah, 0x0E
+.next:
+    lodsb
+    cmp al, 0
+    je .done
+    int 0x10
+    jmp .next
+.done:
+    ret
 
 newline:
-    mov al, 0x0D   ; Carriage return
+    mov al, 0x0D
     int 0x10
-    mov al, 0x0A   ; Line feed
+    mov al, 0x0A
     int 0x10
     ret
 
 disk_error:
-    mov si, errmsg
+    mov si, msg_error
     call print
     jmp $
 
-; --- Print routine ---
-print:
-    mov ah, 0x0E        ; BIOS teletype function
-.next_char:
-    lodsb               ; Load byte at DS:SI into AL and increment SI
-    cmp al, 0           ; Check for null terminator
-    je .done            ; If zero, we're done
-    int 0x10            ; Print character in AL
-    jmp .next_char
-.done:
-    ret
+; ================================
+; Messages
+; ================================
+msg_loading db 'Loading Guil-OS kernel...', 0
+msg_error   db 'Disk read failed!', 0
 
-
-errmsg db 'Disk read failed!', 0
-msgk db 'loading kernel   ', 0
-msgk2 db 'jmp to protected mode done...   ', 0
-
-
+; ================================
+; Boot signature
+; ================================
 times 510 - ($ - $$) db 0
-dw 0xAA55            ; Boot signature
+dw 0xAA55
