@@ -1,6 +1,129 @@
-# Guil-OS
-## Bare-Metal Guillaume Foisy OS
- 
-Merge to Gitlab.com  
+# **Guil‑OS — A Minimalist, Modular, Bare‑Metal x86 Operating System**
 
-- https://gitlab.com/foisyguillaume/Guil-OS
+Guil‑OS is a lightweight, modular, and fully hand‑crafted operating system designed for retro x86 hardware.  
+It focuses on **clarity**, **maintainability**, and **hardware longevity**, offering a clean architecture that avoids bloat and embraces simplicity.
+
+This project is both a technical playground and a manifesto for **ethical, ecological computing**:  
+reviving old machines, reducing e‑waste, and proving that elegant software can run on modest hardware.
+
+---
+
+## 🚀 **Features**
+
+### **🧠 Protected Mode Kernel**
+- Custom GDT  
+- Custom IDT (256 entries)  
+- PIC remapping  
+- IRQ0 (timer) + IRQ1 (keyboard)  
+- Clean interrupt handlers  
+- Fully 32‑bit environment  
+
+### **⌨️ Modern Keyboard Driver (IRQ‑Driven)**
+- Scancode → ASCII translation  
+- Shift / Ctrl / Alt state tracking  
+- Backspace, Enter, Tab  
+- Extended keys (0xE0)  
+- Arrow keys (left/right/up/down)  
+- Circular input buffer  
+- No polling — fully interrupt‑driven  
+
+### **🖥️ Text‑Mode Terminal**
+- 80×25 VGA text mode  
+- Custom text buffer  
+- Cursor management  
+- Line editing (backspace, redraw)  
+- Shell input system  
+
+### **🧩 Modular Architecture**
+- Clear separation of kernel, drivers, and userland  
+- Minimal dependencies  
+- Clean, readable assembly  
+- Designed for future scripting integration (Lua, Perl, Tcl)  
+
+### **🕹️ Retro Hardware Friendly**
+- Designed to run on:
+  - Pentium / 486 / 386  
+  - Laptops with PCMCIA  
+  - ISA/PCI network cards (RTL8139, NE2000, 3Com 3C562 planned)  
+- Boots from BIOS with no external OS  
+
+---
+
+## 🛠️ **Build & Run**
+
+### **Requirements**
+- NASM  
+- QEMU or real hardware  
+- A bootloader (included or external)  
+
+### **Build**
+```bash
+nasm -f bin kernel.asm -o kernel.bin
+```
+
+### **Run in QEMU**
+```bash
+qemu-system-i386 -kernel kernel.bin
+```
+
+### **Run on real hardware**
+Flash to USB or floppy image and boot directly.
+
+---
+
+## 🧭 **Project Goals**
+
+### **Short‑Term**
+- Finalize keyboard driver  
+- Add TTY switching (Alt+F1/F2/F3)  
+- Improve shell input  
+- Add timer‑based features  
+
+### **Long‑Term**
+- Full network stack (GF‑NetStack)  
+- PCMCIA support (3Com 3C562)  
+- Wi‑Fi support (Linksys WPC11 v4, RTL8180L)  
+- Minimal POSIX‑like API  
+- Lua/Perl scripting engine  
+- Graphical terminal  
+- Lightweight window system  
+
+---
+
+## 📚 **Philosophy**
+
+Guil‑OS is built on three principles:
+
+### **1. Modularity**
+Every component is small, isolated, and understandable.
+
+### **2. Maintainability**
+Readable code > clever hacks.  
+Future contributors should feel at home.
+
+### **3. Ecological Computing**
+Old hardware deserves a second life.  
+Software should empower, not consume.
+
+---
+
+## 🤝 **Contributing**
+
+Contributions are welcome!  
+Whether you want to fix a bug, add a driver, or improve documentation, feel free to open an issue or submit a pull request.
+
+---
+
+## 📜 **License**
+
+MIT License — simple, permissive, contributor‑friendly.
+
+---
+
+## 🧑‍💻 **Author**
+
+**Guillaume Foisy** — Architect and technical lead of Guil‑OS  
+Passionate about retro hardware, modular design, and ethical computing.
+
+---
+
