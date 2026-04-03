@@ -56,14 +56,7 @@ protected_mode:
     xor eax, eax            ; eax = index = 0
     mov ecx, 256            ; 256 entrées
 
-.init_idt_loop:
-    mov edx, isr_default    ; base
-    mov bx, CODE_SEG        ; selector
-    mov cl, 0x8E            ; present, ring0, 32-bit interrupt gate
-    call set_idt_entry
 
-    inc eax
-    loop .init_idt_loop
 
     lidt [idt_descriptor]
 
@@ -81,15 +74,20 @@ protected_mode:
 
 
 
+    
 
-
+    mov esi, msg_pm1
+    call print_pm
+    call wait_for_enter
     mov esi, msg_pm
     call print_pm
-
-
+    call clear_input_buffer
+    call clear_keyboard_buffer
+    call clear_input_line
     call read_input_pm            ; Read user input
-    call parse_command            ; Parse and execute
-    jmp .start_shell              ; Loop back
+    
+    ;call parse_command            ; Parse and execute
+    jmp .start_shell          ; Loop back
 
 
 
@@ -97,6 +95,12 @@ protected_mode:
 
 
 parse_command:
+    
+    
+    
+    
+    
+    
     mov si, input_buffer
 
     ; Check for "-help"
@@ -179,8 +183,8 @@ parse_command:
 
 
 .advance_cursor:
-
-    call clear_input_buffer
+   
+    
     ret
 
 
@@ -318,22 +322,28 @@ strcmp32:
 
 strncmp32:
     ; ESI = input string
-    ; EDX = file table entry
-    ; ECX = number of characters to compare
+    ; EDI = command string
+    ; ECX = number of chars to compare
 
 .loop:
+    cmp ecx, 0
+    je .equal
+
     mov al, [esi]
-    mov bl, [edx]
+    test al, al
+    jz .not_equal        ; input shorter than expected
+
+    mov bl, [edi]
     cmp al, bl
     jne .not_equal
-    dec ecx
-    je .equal
+
     inc esi
-    inc edx
+    inc edi
+    dec ecx
     jmp .loop
 
 .not_equal:
-    mov al, 0
+    xor al, al
     ret
 
 .equal:
@@ -461,67 +471,75 @@ strcmp:    ;si <--
     ret
 
 scancode_to_ascii:
-    ; AL = scancode
     cmp al, 0x39
-    ja .unknown              ; Only handle scancodes up to 0x39
-
-    movzx ebx, al            ; Index into table
+    ja .unknown
+    movzx ebx, al
     mov al, [scancode_table + ebx]
     ret
 
 .unknown:
-    mov al, '?'
+    mov al, 0
     ret
 
 clear_input_buffer:
-    mov di, input_buffer
-    mov cx, 128
-    mov al, 0
+    mov edi, input_buffer   ; effacer avec EDI (32 bits)
+    mov ecx, 128
+    xor eax, eax
     rep stosb
-    xor bx, bx
+
+    mov esi, input_buffer   ; ← IMPORTANT : remettre ESI au début
+    xor bx, bx              ; compteur de caractères
     ret
 
-flush_keyboard:
-    mov dx, 0x64
-.wait:
-    in al, dx
-    test al, 1
-    jz .done
-    in al, 0x60
-    jmp .wait
-.done:
-    ret
 
+clear_input_line:
+    movzx ecx, byte [logical_cursor_row]
+    imul ecx, 80
+    mov edi, text_buffer
+    shl ecx, 1
+    add edi, ecx
+    mov ax, 0x0720        ; ' ' avec attribut
+    mov cx, 80
+.clear_loop:
+    stosw
+    loop .clear_loop
+    ret
+    
 
 read_input_pm:
-    mov si, input_buffer
-    xor bx, bx                      ; character count
+	call clear_input_line
+	mov esi, input_buffer
+	xor bx, bx                     ; character count
 
 .read_key:
-    ; Lire une touche depuis le buffer IRQ
-    call get_key_pm                 ; AL = caractère ou 0 si rien
+    call get_key_pm
     test al, al
-    jz .read_key                    ; rien → attendre
+    jz .read_key
 
-    ; Gérer Enter (ASCII 0x0D)
+    ; Enter
     cmp al, 0x0D
     je .done
 
-    ; Gérer Backspace (ASCII 0x08 si tu veux, ou tu peux mapper autrement)
+    ; Backspace
     cmp al, 0x08
     je .backspace
 
-    ; Stocker le caractère dans input_buffer
-    mov [si], al
+    ; --- NEW: ignore non‑printable / control codes ---
+    cmp al, 0x20          ; below space?
+    jb .control_or_ignore
+    cmp al, 0x7E          ; above '~'?
+    ja .control_or_ignore
+
+    ; from here: AL is a printable character
+
+    mov [esi], al
     inc si
     inc bx
 
-    ; Préparer AX pour affichage
     mov ah, 0x07
     movzx eax, al
     or ax, 0x0700
 
-    ; Calculer position dans text_buffer
     movzx ecx, byte [logical_cursor_row]
     imul ecx, 80
     movzx edx, byte [cursor_col]
@@ -537,6 +555,13 @@ read_input_pm:
     call set_cursor_pm
     call redraw_screen
     jmp .read_key
+
+.control_or_ignore:
+    ; here you can:
+    ; - handle arrows, Ctrl shortcuts, etc.
+    ; - or just ignore and loop
+    jmp .read_key
+
 
 .backspace:
     cmp bx, 0
@@ -565,64 +590,7 @@ read_input_pm:
     jmp .read_key
 
 .done:
-    ; Optionnel : null‑terminate input_buffer
-    mov byte [si], 0
-    ret
-
-.backspace:
-    cmp bx, 0
-    je .read_key
-    dec bx
-    dec si
-    cmp byte [cursor_col], 0
-    je .read_key
-    dec byte [cursor_col]
-
-    ; Erase character in buffer
-    mov ax, 0x0720
-    movzx ecx, byte [logical_cursor_row]
-    imul ecx, 80
-    movzx edx, byte [cursor_col]
-    add ecx, edx
-    shl ecx, 1
-    mov edi, text_buffer
-    add edi, ecx
-    stosw
-
-    mov byte [screen_dirty], 1
-    call update_cursor_row
-    call set_cursor_pm
-    call redraw_screen
-    jmp .read_key
-
-
-.read_extended:
-    in al, 0x60                     ; read second byte
-    cmp al, 0x51                    ; Page Down
-    je .scroll_down
-    cmp al, 0x49                    ; Page Up
-    je .scroll_up
-    jmp .read_key
-
-.scroll_up:
-    cmp byte [scroll_offset], 0
-    je .read_key
-    dec byte [scroll_offset]
-    mov byte [screen_dirty], 1
-    call redraw_screen
-    jmp .read_key
-
-.scroll_down:
-    cmp byte [scroll_offset], 75   ; 100 - 25
-    je .read_key
-    inc byte [scroll_offset]
-    mov byte [screen_dirty], 1
-    call redraw_screen
-    jmp .read_key
-
-.done:
-    ;mov byte [si], 0         ; Null-terminate input
-
+    mov byte [esi], 0
     ret
 
 
@@ -676,7 +644,6 @@ set_cursor_pm:   ;16bits !!
 
 
 Clear_screen:
- ; Clear screen only once? Or move this to init
     mov edi, 0xB8000
     mov ax, 0x0720
     mov ecx, 80 * 25
@@ -891,24 +858,23 @@ print_string_pm:
     push esi
 
 .next_char:
-    lodsb                      ; Load byte from [ESI] into AL
-    test al, al                ; Check for null terminator
+    lodsb
+    test al, al
     jz .done
 
-    cmp al, 0x0A               ; Newline?
+    cmp al, 0x0A
     je .newline
 
-    ; Write character to [EDI] with attribute
-    mov ah, 0x07               ; Light gray on black
-    mov [edi], ax              ; Write character and attribute
-    add edi, 2                 ; Advance EDI by 2 bytes
-    inc byte [cursor_col]      ; Advance column
+    ; écrire caractère dans text_buffer
+    mov ah, 0x07
+    mov [edi], ax
+    add edi, 2
+    inc byte [cursor_col]
 
-    ; Check for column overflow
     cmp byte [cursor_col], 80
-    jl .next_char              ; If still within line, continue
+    jl .next_char
 
-    ; Wrap to next line
+    ; fin de ligne → passer à la suivante
     call .advance_line
     jmp .next_char
 
@@ -918,21 +884,18 @@ print_string_pm:
 
 .advance_line:
     inc byte [logical_cursor_row]
-    cmp byte [logical_cursor_row], 25
-    jl .recalc_edi
 
-    ; Wrap to top if row exceeds screen height
-    mov byte [logical_cursor_row], 0
+    ; scroll si nécessaire
+    call check_auto_scroll
 
-.recalc_edi:
+    ; recalculer EDI en fonction du scroll
     movzx eax, byte [logical_cursor_row]
     imul eax, 80
-    mov byte [cursor_col], 0
-    movzx ecx, byte [cursor_col]
-    add eax, ecx
     shl eax, 1
     mov edi, text_buffer
     add edi, eax
+
+    mov byte [cursor_col], 0
     ret
 
 .done:
@@ -989,7 +952,7 @@ align 512
 
 
 
-
+msg_pm1: db "press enter to open shell", 0
 msg_pm: db "ADMIN @ Guil-OS: ", 0
 text_buffer: times 8000 dw 0x0720
 
@@ -1053,64 +1016,134 @@ db "end of files", 0x0A
 db 0x0A
 db 0
 scancode_table:
-    db 0    ; 0x00
-    db 0    ; 0x01 - ESC
-    db "1"  ; 0x02
-    db "2"  ; 0x03
-    db "3"  ; 0x04
-    db "4"  ; 0x05
-    db "5"  ; 0x06
-    db "6"  ; 0x07
-    db "7"  ; 0x08
-    db "8"  ; 0x09
-    db "9"  ; 0x0A
-    db "0"  ; 0x0B
-    db "-"  ; 0x0C
-    db "="  ; 0x0D
-    db 0x08 ; 0x0E - Backspace (CORRIGÉ)
-    db 0x09 ; 0x0F - Tab (CORRIGÉ)
-    db "q"  ; 0x10
-    db "w"  ; 0x11
-    db "e"  ; 0x12
-    db "r"  ; 0x13
-    db "t"  ; 0x14
-    db "y"  ; 0x15
-    db "u"  ; 0x16
-    db "i"  ; 0x17
-    db "o"  ; 0x18
-    db "p"  ; 0x19
-    db "["  ; 0x1A
-    db "]"  ; 0x1B
-    db 0x0D ; 0x1C - Enter (ASCII CR)
-    db 0    ; 0x1D - Ctrl
-    db "a"  ; 0x1E
-    db "s"  ; 0x1F
-    db "d"  ; 0x20
-    db "f"  ; 0x21
-    db "g"  ; 0x22
-    db "h"  ; 0x23
-    db "j"  ; 0x24
-    db "k"  ; 0x25
-    db "l"  ; 0x26
-    db ";"  ; 0x27
-    db "'"  ; 0x28
-    db "`"  ; 0x29
-    db 0    ; 0x2A - Left Shift
-    db "\"  ; 0x2B
-    db "z"  ; 0x2C
-    db "x"  ; 0x2D
-    db "c"  ; 0x2E
-    db "v"  ; 0x2F
-    db "b"  ; 0x30
-    db "n"  ; 0x31
-    db "m"  ; 0x32
-    db ","  ; 0x33
-    db "."  ; 0x34
-    db "/"  ; 0x35
-    db 0    ; 0x36 - Right Shift
-    db "*"  ; 0x37 - Keypad *
-    db 0    ; 0x38 - Alt
-    db " "  ; 0x39 - Space
+    db 0      ; 0x00
+    db 0      ; 0x01 - ESC
+    db "1"    ; 0x02
+    db "2"    ; 0x03
+    db "3"    ; 0x04
+    db "4"    ; 0x05
+    db "5"    ; 0x06
+    db "6"    ; 0x07
+    db "7"    ; 0x08
+    db "8"    ; 0x09
+    db "9"    ; 0x0A
+    db "0"    ; 0x0B
+    db "-"    ; 0x0C
+    db "="    ; 0x0D
+    db 0x08   ; 0x0E - Backspace
+    db 0x09   ; 0x0F - Tab
+    db "q"    ; 0x10
+    db "w"    ; 0x11
+    db "e"    ; 0x12
+    db "r"    ; 0x13
+    db "t"    ; 0x14
+    db "y"    ; 0x15
+    db "u"    ; 0x16
+    db "i"    ; 0x17
+    db "o"    ; 0x18
+    db "p"    ; 0x19
+    db "["    ; 0x1A
+    db "]"    ; 0x1B
+    db 0x0D   ; 0x1C - Enter
+    db 0      ; 0x1D - Ctrl
+    db "a"    ; 0x1E
+    db "s"    ; 0x1F
+    db "d"    ; 0x20
+    db "f"    ; 0x21
+    db "g"    ; 0x22
+    db "h"    ; 0x23
+    db "j"    ; 0x24
+    db "k"    ; 0x25
+    db "l"    ; 0x26
+    db ";"    ; 0x27
+    db "'"    ; 0x28
+    db "`"    ; 0x29
+    db 0      ; 0x2A - Left Shift
+    db "\"    ; 0x2B
+    db "z"    ; 0x2C
+    db "x"    ; 0x2D
+    db "c"    ; 0x2E
+    db "v"    ; 0x2F
+    db "b"    ; 0x30
+    db "n"    ; 0x31
+    db "m"    ; 0x32
+    db ","    ; 0x33
+    db "."    ; 0x34
+    db "/"    ; 0x35
+    db 0      ; 0x36 - Right Shift
+    db "*"    ; 0x37 - Keypad *
+    db 0      ; 0x38 - Alt
+    db " "    ; 0x39 - Space
+    db 0      ; 0x3A - CapsLock
+    db 0      ; 0x3B - F1
+    db 0      ; 0x3C - F2
+    db 0      ; 0x3D - F3
+    db 0      ; 0x3E - F4
+    db 0      ; 0x3F - F5
+    db 0      ; 0x40 - F6
+    db 0      ; 0x41 - F7
+    db 0      ; 0x42 - F8
+    db 0      ; 0x43 - F9
+    db 0      ; 0x44 - F10
+    db 0      ; 0x45 - NumLock
+    db 0      ; 0x46 - ScrollLock
+    db "7"    ; 0x47 - Keypad 7
+    db "8"    ; 0x48 - Keypad 8
+    db "9"    ; 0x49 - Keypad 9
+    db "-"    ; 0x4A - Keypad -
+    db "4"    ; 0x4B - Keypad 4
+    db "5"    ; 0x4C - Keypad 5
+    db "6"    ; 0x4D - Keypad 6
+    db "+"    ; 0x4E - Keypad +
+    db "1"    ; 0x4F - Keypad 1
+    db "2"    ; 0x50 - Keypad 2
+    db "3"    ; 0x51 - Keypad 3
+    db "0"    ; 0x52 - Keypad 0
+    db "."    ; 0x53 - Keypad .
+    db 0      ; 0x54
+    db 0      ; 0x55
+    db 0      ; 0x56
+    db 0      ; 0x57 - F11
+    db 0      ; 0x58 - F12
+    db 0      ; 0x59
+    db 0      ; 0x5A
+    db 0      ; 0x5B
+    db 0      ; 0x5C
+    db 0      ; 0x5D
+    db 0      ; 0x5E
+    db 0      ; 0x5F
+    db 0      ; 0x60
+    db 0      ; 0x61
+    db 0      ; 0x62
+    db 0      ; 0x63
+    db 0      ; 0x64
+    db 0      ; 0x65
+    db 0      ; 0x66
+    db 0      ; 0x67
+    db 0      ; 0x68
+    db 0      ; 0x69
+    db 0      ; 0x6A
+    db 0      ; 0x6B
+    db 0      ; 0x6C
+    db 0      ; 0x6D
+    db 0      ; 0x6E
+    db 0      ; 0x6F
+    db 0      ; 0x70
+    db 0      ; 0x71
+    db 0      ; 0x72
+    db 0      ; 0x73
+    db 0      ; 0x74
+    db 0      ; 0x75
+    db 0      ; 0x76
+    db 0      ; 0x77
+    db 0      ; 0x78
+    db 0      ; 0x79
+    db 0      ; 0x7A
+    db 0      ; 0x7B
+    db 0      ; 0x7C
+    db 0      ; 0x7D
+    db 0      ; 0x7E
+    db 0      ; 0x7F
 
 [BITS 32]
 
@@ -1136,7 +1169,15 @@ isr_default:
 ; base = edx
 ; sel  = bx
 ; flags = cl
+.init_idt_loop:
+    mov edx, isr_default    ; base
+    mov bx, CODE_SEG        ; selector
+    mov cl, 0x8E            ; present, ring0, 32-bit interrupt gate
+    call set_idt_entry
 
+    inc eax
+    loop .init_idt_loop
+    
 set_idt_entry:
     push eax
     push edx
@@ -1172,32 +1213,43 @@ set_idt_entry:
     ret
     
 remap_pic:
-    ; init
+    ; --- Étape 1 : Initialisation (ICW1) ---
+    ; 0x11 = démarrage + mode cascade + ICW4 suivra
     mov al, 0x11
-    out 0x20, al
-    out 0xA0, al
+    out 0x20, al        ; PIC maître
+    out 0xA0, al        ; PIC esclave
 
-    ; vecteurs de base
-    mov al, 0x20        ; master -> 0x20–0x27
+    ; --- Étape 2 : Définir les vecteurs d'interruptions (ICW2) ---
+    ; Le PIC maître enverra IRQ0–7 sur INT 0x20–0x27
+    mov al, 0x20
     out 0x21, al
-    mov al, 0x28        ; slave -> 0x28–0x2F
+
+    ; Le PIC esclave enverra IRQ8–15 sur INT 0x28–0x2F
+    mov al, 0x28
     out 0xA1, al
 
-    ; chaînage
-    mov al, 0x04        ; master a un slave sur IRQ2
+    ; --- Étape 3 : Chaînage maître/esclave (ICW3) ---
+    ; Le maître a un esclave connecté sur IRQ2 → bit 2 = 1 → 0x04
+    mov al, 0x04
     out 0x21, al
-    mov al, 0x02        ; slave est sur IRQ2
+
+    ; L’esclave est connecté sur la ligne IRQ2 du maître → valeur = 2
+    mov al, 0x02
     out 0xA1, al
 
-    ; mode 8086
+    ; --- Étape 4 : Mode 8086/88 (ICW4) ---
+    ; 0x01 = mode processeur 8086 (obligatoire pour OS modernes)
     mov al, 0x01
     out 0x21, al
     out 0xA1, al
 
-    ; unmask tout pour l’instant (tu pourras affiner)
+    ; --- Étape 5 : Masques d'interruptions (OCW1) ---
+    ; 0x00 = tout démasquer (autoriser toutes les IRQ)
+    ; Tu pourras remasquer plus tard (timer, clavier, etc.)
     mov al, 0x00
-    out 0x21, al
-    out 0xA1, al
+    out 0x21, al        ; masque maître
+    out 0xA1, al        ; masque esclave
+
     ret
     
     
@@ -1240,65 +1292,84 @@ install_keyboard_irq:
 global isr_keyboard
 
 isr_keyboard:
-    ; Lire scancode brut
     in al, 0x60
+    cmp al, 0
+    je .eoi            ; null → ignore safely
     mov bl, al
 
-    ; Ignorer les releases (bit 7 = 1)
+    ; Noise / firmware junk
+    cmp al, 0xFA       ; ACK
+    je .eoi
+    cmp al, 0xFE       ; RESEND
+    je .eoi
+    cmp al, 0xAA       ; BAT OK
+    je .eoi
+
+    ; Ignore releases (bit 7)
     test bl, 0x80
     jnz .eoi
 
-    ; Gérer scancode étendu 0xE0
+    ; Extended prefix
     cmp bl, 0xE0
     je .extended
 
-    ; --- GESTION SHIFT ---
-    cmp bl, 0x2A        ; Left Shift down
+    ; SHIFT
+    cmp bl, 0x2A
     je .shift_down
-    cmp bl, 0x36        ; Right Shift down
+    cmp bl, 0x36
     je .shift_down
 
-    ; --- GESTION CTRL ---
-    cmp bl, 0x1D        ; Ctrl down
+    ; CTRL
+    cmp bl, 0x1D
     je .ctrl_down
 
-    ; --- GESTION ALT ---
-    cmp bl, 0x38        ; Alt down
+    ; ALT
+    cmp bl, 0x38
     je .alt_down
 
-    ; Convertir scancode → ASCII
+    ; Convert scancode → ASCII
     movzx ebx, bl
     mov al, [scancode_table + ebx]
 
-    ; Si 0 → touche non gérée
     test al, al
     jz .eoi
 
-    ; --- Appliquer SHIFT si lettre ---
+    ; SHIFT on letters
     cmp byte [shift_state], 1
     jne .store_char
-
     cmp al, 'a'
     jb .store_char
     cmp al, 'z'
     ja .store_char
-    sub al, 32          ; minuscule → majuscule
+    sub al, 32
 
 .store_char:
-    ; Ajouter dans buffer circulaire
     movzx ecx, byte [keyboard_head]
     mov [keyboard_buf + ecx], al
     inc byte [keyboard_head]
     and byte [keyboard_head], 127
-
     jmp .eoi
 
-; ============================
-; TOUCHES ÉTENDUES (0xE0)
-; ============================
+; --- Extended keys ---
 .extended:
+    ; Wait for second byte (modern laptop safe)
+.wait2:
+    in al, 0x64
+    test al, 1
+    jz .wait2
+
     in al, 0x60
     mov bl, al
+
+    ; Ignore fake USB sequences
+    cmp bl, 0x00
+    je .eoi
+    cmp bl, 0x2A
+    je .eoi
+    cmp bl, 0xAA
+    je .eoi
+    cmp bl, 0xF0
+    je .eoi
 
     cmp bl, 0x4B
     je .arrow_left
@@ -1308,63 +1379,53 @@ isr_keyboard:
     je .arrow_up
     cmp bl, 0x50
     je .arrow_down
-
     jmp .eoi
 
-.arrow_left:
-    mov al, 0x81        ; code spécial flèche gauche
-    jmp .store_char
+.arrow_left:  mov al, 0x81  ; your codes
+jmp .store_char
+.arrow_right: mov al, 0x82
+jmp .store_char
+.arrow_up:    mov al, 0x83
+jmp .store_char
+.arrow_down:  mov al, 0x84
+jmp .store_char
 
-.arrow_right:
-    mov al, 0x82
-    jmp .store_char
+.shift_down:  mov byte [shift_state], 1
+jmp .eoi
+.ctrl_down:   mov byte [ctrl_state], 1
+jmp .eoi
+.alt_down:    mov byte [alt_state], 1
+jmp .eoi
 
-.arrow_up:
-    mov al, 0x83
-    jmp .store_char
-
-.arrow_down:
-    mov al, 0x84
-    jmp .store_char
-
-; ============================
-; TOUCHES DE MODIFICATEURS
-; ============================
-.shift_down:
-    mov byte [shift_state], 1
-    jmp .eoi
-
-.ctrl_down:
-    mov byte [ctrl_state], 1
-    jmp .eoi
-
-.alt_down:
-    mov byte [alt_state], 1
-    jmp .eoi
-
-; ============================
-; FIN D’INTERRUPTION
-; ============================
 .eoi:
     mov al, 0x20
     out 0x20, al
     iretd
     
 get_key_pm:
-    movzx ecx, byte [keyboard_tail]
-    movzx edx, byte [keyboard_head]
-    cmp ecx, edx
+    mov bl, [keyboard_head]
+    mov bh, [keyboard_tail]
+    cmp bl, bh
     je .no_key
 
-    mov al, [keyboard_buf + ecx]
+    movzx ebx, bh
+    mov al, [keyboard_buf + ebx]
+
     inc byte [keyboard_tail]
     and byte [keyboard_tail], 127
     ret
 
 .no_key:
     xor al, al
-    ret   
-      
+    ret
+
+
+clear_keyboard_buffer:
+    mov byte [keyboard_head], 0
+    mov byte [keyboard_tail], 0
+    ret
+    
+         
 [BITS 16]
 ; --- Global Descriptor Table ---
 
