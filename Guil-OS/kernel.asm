@@ -78,7 +78,7 @@ protected_mode:
 
     mov esi, msg_pm1
     call print_pm
-    call wait_for_enter
+    ;call wait_for_enter
     mov esi, msg_pm
     call print_pm
     call clear_input_buffer
@@ -507,55 +507,39 @@ clear_input_line:
     
 
 read_input_pm:
-	call clear_input_line
-	mov esi, input_buffer
-	xor bx, bx                     ; character count
+	
 
 .read_key:
     call get_key_pm
     test al, al
     jz .read_key
 
-    ; Enter
-    cmp al, 0x0D
-    je .done
+	;enter
+	cmp bl, 0x1C
+	je .done
 
     ; Backspace
     cmp al, 0x08
     je .backspace
 
-    ; --- NEW: ignore non‑printable / control codes ---
-    cmp al, 0x20          ; below space?
-    jb .control_or_ignore
-    cmp al, 0x7E          ; above '~'?
-    ja .control_or_ignore
+	   ; --- ignore null / control / non-printable ---
+	test al, al
+	jz .control_or_ignore
 
-    ; from here: AL is a printable character
+	cmp al, 0x20          ; below space?
+	jb .control_or_ignore
 
-    mov [esi], al
-    inc si
-    inc bx
+	cmp al, 0x7E          ; above '~'?
+	ja .control_or_ignore
 
-    mov ah, 0x07
-    movzx eax, al
-    or ax, 0x0700
+    ; from here: AL is printable
+    
+	mov [esi], al
+	call print_string_pm
 
-    movzx ecx, byte [logical_cursor_row]
-    imul ecx, 80
-    movzx edx, byte [cursor_col]
-    add ecx, edx
-    shl ecx, 1
-    mov edi, text_buffer
-    add edi, ecx
-
-    stosw
-    mov byte [screen_dirty], 1
-    call update_cursor_row
-    inc byte [cursor_col]
-    call set_cursor_pm
-    call redraw_screen
-    jmp .read_key
-
+	jmp .read_key
+    
+    
 .control_or_ignore:
     ; here you can:
     ; - handle arrows, Ctrl shortcuts, etc.
@@ -590,7 +574,8 @@ read_input_pm:
     jmp .read_key
 
 .done:
-    mov byte [esi], 0
+    mov [input_buffer], esi
+    ;mov byte [esi], 0
     ret
 
 
@@ -744,9 +729,13 @@ print_pm:    ; 32-bit print command
     mov ah, 0x07
     call print_string_pm   ; assumes ECX = length
 
-    add byte [cursor_col], cl  ; update cursor column by length
+   
+
+
 
     call update_cursor_row
+    
+
     call set_cursor_pm
     mov byte [screen_dirty], 1
     call redraw_screen
@@ -854,6 +843,7 @@ print_file_table_pm:
 
 
 
+
 print_string_pm:
     push esi
 
@@ -888,10 +878,15 @@ print_string_pm:
     ; scroll si nécessaire
     call check_auto_scroll
 
-    ; recalculer EDI en fonction du scroll
+    ; calculer la ligne visible = logical - scroll_offset
     movzx eax, byte [logical_cursor_row]
+    movzx ecx, byte [scroll_offset]
+    sub eax, ecx
+
+    ; eax = ligne visible
     imul eax, 80
     shl eax, 1
+
     mov edi, text_buffer
     add edi, eax
 
@@ -1016,134 +1011,38 @@ db "end of files", 0x0A
 db 0x0A
 db 0
 scancode_table:
-    db 0      ; 0x00
-    db 0      ; 0x01 - ESC
-    db "1"    ; 0x02
-    db "2"    ; 0x03
-    db "3"    ; 0x04
-    db "4"    ; 0x05
-    db "5"    ; 0x06
-    db "6"    ; 0x07
-    db "7"    ; 0x08
-    db "8"    ; 0x09
-    db "9"    ; 0x0A
-    db "0"    ; 0x0B
-    db "-"    ; 0x0C
-    db "="    ; 0x0D
-    db 0x08   ; 0x0E - Backspace
-    db 0x09   ; 0x0F - Tab
-    db "q"    ; 0x10
-    db "w"    ; 0x11
-    db "e"    ; 0x12
-    db "r"    ; 0x13
-    db "t"    ; 0x14
-    db "y"    ; 0x15
-    db "u"    ; 0x16
-    db "i"    ; 0x17
-    db "o"    ; 0x18
-    db "p"    ; 0x19
-    db "["    ; 0x1A
-    db "]"    ; 0x1B
-    db 0x0D   ; 0x1C - Enter
-    db 0      ; 0x1D - Ctrl
-    db "a"    ; 0x1E
-    db "s"    ; 0x1F
-    db "d"    ; 0x20
-    db "f"    ; 0x21
-    db "g"    ; 0x22
-    db "h"    ; 0x23
-    db "j"    ; 0x24
-    db "k"    ; 0x25
-    db "l"    ; 0x26
-    db ";"    ; 0x27
-    db "'"    ; 0x28
-    db "`"    ; 0x29
-    db 0      ; 0x2A - Left Shift
-    db "\"    ; 0x2B
-    db "z"    ; 0x2C
-    db "x"    ; 0x2D
-    db "c"    ; 0x2E
-    db "v"    ; 0x2F
-    db "b"    ; 0x30
-    db "n"    ; 0x31
-    db "m"    ; 0x32
-    db ","    ; 0x33
-    db "."    ; 0x34
-    db "/"    ; 0x35
-    db 0      ; 0x36 - Right Shift
-    db "*"    ; 0x37 - Keypad *
-    db 0      ; 0x38 - Alt
-    db " "    ; 0x39 - Space
-    db 0      ; 0x3A - CapsLock
-    db 0      ; 0x3B - F1
-    db 0      ; 0x3C - F2
-    db 0      ; 0x3D - F3
-    db 0      ; 0x3E - F4
-    db 0      ; 0x3F - F5
-    db 0      ; 0x40 - F6
-    db 0      ; 0x41 - F7
-    db 0      ; 0x42 - F8
-    db 0      ; 0x43 - F9
-    db 0      ; 0x44 - F10
-    db 0      ; 0x45 - NumLock
-    db 0      ; 0x46 - ScrollLock
-    db "7"    ; 0x47 - Keypad 7
-    db "8"    ; 0x48 - Keypad 8
-    db "9"    ; 0x49 - Keypad 9
-    db "-"    ; 0x4A - Keypad -
-    db "4"    ; 0x4B - Keypad 4
-    db "5"    ; 0x4C - Keypad 5
-    db "6"    ; 0x4D - Keypad 6
-    db "+"    ; 0x4E - Keypad +
-    db "1"    ; 0x4F - Keypad 1
-    db "2"    ; 0x50 - Keypad 2
-    db "3"    ; 0x51 - Keypad 3
-    db "0"    ; 0x52 - Keypad 0
-    db "."    ; 0x53 - Keypad .
-    db 0      ; 0x54
-    db 0      ; 0x55
-    db 0      ; 0x56
-    db 0      ; 0x57 - F11
-    db 0      ; 0x58 - F12
-    db 0      ; 0x59
-    db 0      ; 0x5A
-    db 0      ; 0x5B
-    db 0      ; 0x5C
-    db 0      ; 0x5D
-    db 0      ; 0x5E
-    db 0      ; 0x5F
-    db 0      ; 0x60
-    db 0      ; 0x61
-    db 0      ; 0x62
-    db 0      ; 0x63
-    db 0      ; 0x64
-    db 0      ; 0x65
-    db 0      ; 0x66
-    db 0      ; 0x67
-    db 0      ; 0x68
-    db 0      ; 0x69
-    db 0      ; 0x6A
-    db 0      ; 0x6B
-    db 0      ; 0x6C
-    db 0      ; 0x6D
-    db 0      ; 0x6E
-    db 0      ; 0x6F
-    db 0      ; 0x70
-    db 0      ; 0x71
-    db 0      ; 0x72
-    db 0      ; 0x73
-    db 0      ; 0x74
-    db 0      ; 0x75
-    db 0      ; 0x76
-    db 0      ; 0x77
-    db 0      ; 0x78
-    db 0      ; 0x79
-    db 0      ; 0x7A
-    db 0      ; 0x7B
-    db 0      ; 0x7C
-    db 0      ; 0x7D
-    db 0      ; 0x7E
-    db 0      ; 0x7F
+    ; 00–0F
+    db 0,0,"1","2","3","4","5","6","7","8","9","0","-","=",0,0
+    ; 10–1F
+    db "q","w","e","r","t","y","u","i","o","p","[","]",0,0,"a","s"
+    ; 20–2F
+    db "d","f","g","h","j","k","l",";","'","`",0,"\\","z","x","c","v"
+    ; 30–3F
+    db "b","n","m",",",".","/",0,"*",0," ",0,0,0,0,0,0
+    ; 40–4F
+    times 16 db 0
+    ; 50–5F
+    times 16 db 0
+    ; 60–6F
+    times 16 db 0
+    ; 70–7F
+    times 16 db 0
+    ; 80–8F
+    times 16 db 0
+    ; 90–9F
+    times 16 db 0
+    ; A0–AF
+    times 16 db 0
+    ; B0–BF
+    times 16 db 0
+    ; C0–CF
+    times 16 db 0
+    ; D0–DF
+    times 16 db 0
+    ; E0–EF
+    times 16 db 0
+    ; F0–FF
+    times 16 db 0
 
 [BITS 32]
 
@@ -1328,6 +1227,8 @@ isr_keyboard:
     je .alt_down
 
     ; Convert scancode → ASCII
+    
+    
     movzx ebx, bl
     mov al, [scancode_table + ebx]
 
