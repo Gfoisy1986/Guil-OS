@@ -36,7 +36,6 @@ start:
     ; Far jump to 32-bit code
     jmp CODE_SEG:protected_mode
 
-
 ; -------------------------------------------------
 ; À partir d’ici : code 32 bits
 ; -------------------------------------------------
@@ -61,9 +60,9 @@ protected_mode:
     lidt [idt_descriptor]
 
     call remap_pic
-     call install_timer_irq
-     call install_keyboard_irq
-     sti
+    call install_timer_irq
+    call install_keyboard_irq
+    sti
 
     ; puis ton shell :
      jmp .start_shell
@@ -76,17 +75,15 @@ protected_mode:
 
     
 
-    mov esi, msg_pm1
-    call print_pm
-    ;call wait_for_enter
+    call newline_pm
     mov esi, msg_pm
     call print_pm
     call clear_input_buffer
     call clear_keyboard_buffer
     call clear_input_line
-    call read_input_pm            ; Read user input
-    
-    ;call parse_command            ; Parse and execute
+    call read_input_pm
+   
+    call parse_command            ; Parse and execute
     jmp .start_shell          ; Loop back
 
 
@@ -196,7 +193,7 @@ wait_for_enter:
     test al, al
     jz .wait               ; rien reçu → attendre
 
-    cmp al, 0x0D           ; ASCII Enter = 0x0D
+    cmp al, 0x1C            ; ASCII Enter = 0x1C 
     jne .wait
 
     ret
@@ -507,56 +504,64 @@ clear_input_line:
     
 
 read_input_pm:
-	
+
+    mov esi, input_buffer     ; pointeur d’écriture
+    xor bx, bx                ; compteur de caractères
 
 .read_key:
-    call get_key_pm
+    call get_key_pm           ; AL = ascii (ou 0), BL = scancode
     test al, al
-    jz .read_key
+    jz .read_key              ; rien → attendre
 
-	;enter
-	cmp bl, 0x1C
-	je .done
+    
+    
+    
+    
+    ; --- ENTER ---
+    cmp bl, 0x1C              ; Enter (Set 2)
+    je .done
 
-    ; Backspace
-    cmp al, 0x08
+    ; --- BACKSPACE ---
+    cmp bl, 0x66              ; Backspace (Set 2)
     je .backspace
 
-	   ; --- ignore null / control / non-printable ---
-	test al, al
-	jz .control_or_ignore
+    ; --- IGNORE NON-PRINTABLE ---
+    test al, al
+    jz .control_or_ignore
 
-	cmp al, 0x20          ; below space?
-	jb .control_or_ignore
+    cmp al, 0x20
+    jb .control_or_ignore
 
-	cmp al, 0x7E          ; above '~'?
-	ja .control_or_ignore
+    cmp al, 0x7E
+    ja .control_or_ignore
 
-    ; from here: AL is printable
+	; --- PRINTABLE CHARACTER ---
+	mov [esi], al             ; écrire dans input_buffer
+	inc esi
+	inc bx
     
-	mov [esi], al
-	call print_string_pm
+	
+	
 
 	jmp .read_key
-    
-    
+
 .control_or_ignore:
-    ; here you can:
-    ; - handle arrows, Ctrl shortcuts, etc.
-    ; - or just ignore and loop
     jmp .read_key
 
 
 .backspace:
     cmp bx, 0
-    je .read_key
+    je .read_key              ; rien à effacer
+
     dec bx
-    dec si
+    dec esi                   ; reculer dans input_buffer
+
+    ; effacer à l’écran (ta logique existante)
+    ; -----------------------------------------
     cmp byte [cursor_col], 0
     je .read_key
     dec byte [cursor_col]
 
-    ; Effacer le caractère à l’écran
     mov ax, 0x0720
     movzx ecx, byte [logical_cursor_row]
     imul ecx, 80
@@ -573,9 +578,16 @@ read_input_pm:
     call redraw_screen
     jmp .read_key
 
+
 .done:
-    mov [input_buffer], esi
-    ;mov byte [esi], 0
+	
+     mov byte [esi], 0
+	 mov esi, input_buffer
+	
+     call newline_pm
+	 call print_pm
+     call newline_pm
+    
     ret
 
 
@@ -712,35 +724,58 @@ draw_scrollbar:
     ret
 
 ; --- Protected Mode Print Routine ---
-print_pm:    ; 32-bit print command
+print_pm:                     ; 32-bit print command
     ; ESI = pointer to string
     ; ECX = length of string
 
-    push esi
+    push esi                 ; preserve ESI (string pointer)
 
-    movzx eax, byte [logical_cursor_row]
-    imul eax, 80
-    movzx edx, byte [cursor_col]
-    add eax, edx
-    shl eax, 1
-    mov edi, text_buffer
-    add edi, eax
+    ; ---------------------------------------------------------
+    ; Compute EDI = address in text_buffer where printing starts
+    ; ---------------------------------------------------------
 
-    mov ah, 0x07
-    call print_string_pm   ; assumes ECX = length
+    movzx eax, byte [logical_cursor_row]   ; logical row (not visible row)
+    movzx ecx, byte [scroll_offset]        ; current scroll offset
+    sub eax, ecx                           ; convert to visible row
 
-   
+    imul eax, 80                           ; row * 80 columns
+    shl eax, 1                             ; *2 bytes per cell
 
+    mov edi, text_buffer                   ; BASE address of text buffer
+    add edi, eax                           ; final write position
 
+    ; ---------------------------------------------------------
+    ; AH = attribute, AL = character (set later by print_string_pm)
+    ; ---------------------------------------------------------
+    mov ah, 0x07                           ; light gray on black
 
+    ; ---------------------------------------------------------
+    ; Print the string into text_buffer
+    ; print_string_pm uses:
+    ;   EDI = write pointer
+    ;   ECX = length
+    ;   ESI = string pointer
+    ; ---------------------------------------------------------
+    call print_string_pm
+
+    ; ---------------------------------------------------------
+    ; Update logical cursor row/col after printing
+    ; (handles wrapping, newlines, etc.)
+    ; ---------------------------------------------------------
     call update_cursor_row
-    
 
+    ; ---------------------------------------------------------
+    ; Update hardware cursor (visible blinking cursor)
+    ; ---------------------------------------------------------
     call set_cursor_pm
+
+    ; ---------------------------------------------------------
+    ; Mark screen dirty and redraw visible area
+    ; ---------------------------------------------------------
     mov byte [screen_dirty], 1
     call redraw_screen
 
-    pop esi
+    pop esi                 ; restore ESI
     ret
 
 
@@ -845,86 +880,96 @@ print_file_table_pm:
 
 
 print_string_pm:
-    push esi
+    push esi                        ; sauvegarde du pointeur de chaîne
 
 .next_char:
-    lodsb
-    test al, al
-    jz .done
+    lodsb                           ; AL = prochain caractère, ESI++
+    test al, al                     ; fin de chaîne (AL = 0) ?
+    jz .done                        ; oui → sortir
 
-    cmp al, 0x0A
-    je .newline
+    cmp al, 0x0A                    ; '\n' ?
+    je .newline                     ; oui → aller à la ligne
 
-    ; écrire caractère dans text_buffer
-    mov ah, 0x07
-    mov [edi], ax
-    add edi, 2
-    inc byte [cursor_col]
+    ; --- écrire caractère dans text_buffer ---
+    mov ah, 0x07                    ; attribut (gris sur noir)
+    mov [edi], ax                   ; écrire caractère + attribut
+    add edi, 2                      ; avancer d'une cellule (2 octets)
+    inc byte [cursor_col]           ; avancer la colonne logique
 
-    cmp byte [cursor_col], 80
-    jl .next_char
+    cmp byte [cursor_col], 80       ; fin de ligne ?
+    jl .next_char                   ; non → continuer
 
-    ; fin de ligne → passer à la suivante
+    ; --- fin de ligne → passer à la suivante ---
     call .advance_line
     jmp .next_char
 
 .newline:
+    ; --- gestion explicite du '\n' ---
     call .advance_line
     jmp .next_char
 
 .advance_line:
-    inc byte [logical_cursor_row]
+    inc byte [logical_cursor_row]   ; avancer la ligne logique
 
-    ; scroll si nécessaire
-    call check_auto_scroll
+    ; --- scroll si nécessaire ---
+    call check_auto_scroll          ; peut modifier scroll_offset
 
-    ; calculer la ligne visible = logical - scroll_offset
+    ; --- calculer la ligne visible = logical - scroll_offset ---
     movzx eax, byte [logical_cursor_row]
     movzx ecx, byte [scroll_offset]
-    sub eax, ecx
+    sub eax, ecx                    ; EAX = ligne visible
 
-    ; eax = ligne visible
-    imul eax, 80
-    shl eax, 1
+    ; --- convertir en offset dans text_buffer ---
+    imul eax, 80                    ; ligne * 80 colonnes
+    shl eax, 1                      ; *2 (caractère + attribut)
 
-    mov edi, text_buffer
-    add edi, eax
+    mov edi, text_buffer            ; base du buffer texte
+    add edi, eax                    ; EDI = nouvelle position d'écriture
 
-    mov byte [cursor_col], 0
+    mov byte [cursor_col], 0        ; retour colonne = 0
     ret
 
 .done:
-    pop esi
+    pop esi                         ; restaurer ESI
     ret
 
 
 update_cursor_row:
-    movzx eax, byte [logical_cursor_row]
-    movzx ecx, byte [scroll_offset]
-    sub eax, ecx
-    cmp eax, 25
-    jae .offscreen
-    mov [cursor_row], al
+    movzx eax, byte [logical_cursor_row]   ; ligne logique
+    movzx ecx, byte [scroll_offset]        ; offset de scroll
+    sub eax, ecx                           ; ligne visible = logical - scroll
+
+    cmp eax, 25                            ; hors écran ?
+    jae .offscreen                         ; oui → clamp
+
+    mov [cursor_row], al                   ; sinon → ligne visible OK
     ret
 
 .offscreen:
-    mov byte [cursor_row], 24      ; Clamp to bottom
+    mov byte [cursor_row], 24              ; clamp à la dernière ligne visible
     ret
 
 
 newline_pm:
 
- inc byte [logical_cursor_row]
-    mov byte [cursor_col], 0
+    inc byte [logical_cursor_row]      ; avancer la ligne logique (pas la ligne visible)
+    mov byte [cursor_col], 0           ; retour à la colonne 0
 
-    ; Recalculate EDI for logical buffer
-    movzx eax, byte [logical_cursor_row]
-    imul eax, 80
-    movzx ecx, byte [cursor_col]
-    add eax, ecx
-    shl eax, 1
-    mov edi, text_buffer
-    add edi, eax
+    ; ---------------------------------------------------------
+    ; Recalculer EDI pour pointer dans le text_buffer
+    ; MAIS ATTENTION : ceci utilise la ligne LOGIQUE brute.
+    ; Si tu scrolles, logical_cursor_row continue d'augmenter.
+    ; ---------------------------------------------------------
+
+    movzx eax, byte [logical_cursor_row] ; EAX = ligne logique
+    imul eax, 80                          ; ligne * 80 colonnes
+    movzx ecx, byte [cursor_col]          ; colonne (toujours 0 ici)
+    add eax, ecx                           ; ajouter la colonne
+    shl eax, 1                             ; *2 (caractère + attribut)
+
+    mov edi, text_buffer                   ; base du buffer texte
+    add edi, eax                           ; EDI = nouvelle position d'écriture
+
     ret
 
 

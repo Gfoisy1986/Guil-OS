@@ -1,6 +1,3 @@
-; ================================
-; Guil-OS Bootloader (Stage 1)
-; ================================
 [org 0x7C00]
 
     cli                     ; Désactive interruptions
@@ -13,25 +10,30 @@
     mov ah, 0x0E
     mov si, msg_loading
     call print
+    
+    
+
+
+
 
 ; ================================
 ; Lecture du kernel (126 secteurs)
 ; ================================
     mov bx, 0x8000          ; Adresse de chargement du kernel
     mov dh, 0               ; Head
-    mov dl, 0x80            ; Disque dur principal
+    mov dl, 0x80           ; Disque dur principal
     mov ch, 0               ; Cylinder
     mov cl, 2               ; Secteur 2
     mov ah, 0x02            ; Fonction BIOS: lire secteurs
-    mov al, 126             ; Nombre de secteurs à lire
+    mov al, 128           ; Nombre de secteurs à lire
     int 0x13
     jc disk_error
 
-; ================================
-; Jump vers le kernel
-; ================================
     cli
     jmp 0x0000:0x8000       ; Jump far vers kernel
+
+
+
 
 ; ================================
 ; Routines utilitaires
