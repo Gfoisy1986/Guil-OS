@@ -82,7 +82,9 @@ protected_mode:
     call clear_keyboard_buffer
     call clear_input_line
     call read_input_pm
-   
+    ;mov byte [esi], 0
+	call print_pm
+	mov [input_buffer], esi
     call parse_command            ; Parse and execute
     jmp .start_shell          ; Loop back
 
@@ -519,6 +521,7 @@ read_input_pm:
     
     ; --- ENTER ---
     cmp bl, 0x1C              ; Enter (Set 2)
+    
     je .done
 
     ; --- BACKSPACE ---
@@ -536,12 +539,10 @@ read_input_pm:
     ja .control_or_ignore
 
 	; --- PRINTABLE CHARACTER ---
-	mov [esi], al             ; écrire dans input_buffer
-	inc esi
-	inc bx
-    
 	
-	
+   mov [esi], al
+   inc esi
+   inc bx	
 
 	jmp .read_key
 
@@ -581,12 +582,12 @@ read_input_pm:
 
 .done:
 	
-     mov byte [esi], 0
-	 mov esi, input_buffer
-	
-     call newline_pm
-	 call print_pm
-     call newline_pm
+     
+	 
+	mov [input_buffer], esi
+     
+	 
+     
     
     ret
 
