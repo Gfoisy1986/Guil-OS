@@ -69,26 +69,30 @@ protected_mode:
 
 
 .start_shell:
-
-
-
-
+    
+    call Clear_screen
     
 
-    call newline_pm
-    mov esi, msg_pm
+    mov esi, msg_help
     call print_pm
-    call newline_pm
+
     call clear_keyboard_buffer
-    
     call clear_input_line
-   
-    call read_input_pm
+
+    ; place cursor after prompt
+    mov byte [cursor_row], 24
+    mov byte [cursor_col], 0   ; adjust to real prompt length
+    call set_cursor_input_pm
     
-	call newline_pm
-	
-    call parse_command            ; Parse and execute
-    jmp .start_shell        ; Loop back
+    call read_input_pm           ; read user input on row 24
+
+    call newline_pm              ; add newline to scroll area
+    mov esi, input_buffer
+    call print_pm
+    call newline_pm              ; add newline to scroll area
+    
+    call parse_command           ; execute command
+    jmp .start_shell
 
 
 
@@ -533,75 +537,82 @@ clear_input_line:
     ret
     
 
+; ---------------------------------------------------------
+; read_input_pm
+; Reads user input on fixed bottom line (row 24)
+; Uses:
+;   input_buffer   = typed characters
+;   input_len      = number of characters typed
+; ---------------------------------------------------------
+
 read_input_pm:
 
-    mov esi, input_buffer     ; pointeur d’écriture
-    xor ebx, ebx              ; compteur de caractères
+    mov esi, input_buffer
+    xor ebx, ebx                 ; EBX = input_len
+    
 
 .loop:
-    ; attendre une touche
-.wait:
-    call get_key_pm           ; AL = ASCII, BL = scancode
+.wait_key:
+    call get_key_pm              ; AL = ASCII, BL = scancode
     test bl, bl
-    jz .wait                  ; aucune touche → attendre
+    jz .wait_key
 
     ; ----------------------------
-    ; TRAITEMENT DES TOUCHES SPÉCIALES
-    ; ----------------------------
-
     ; ENTER
+    ; ----------------------------
     cmp bl, 0x1C
     je .enter
 
+    ; ----------------------------
     ; BACKSPACE
+    ; ----------------------------
     cmp bl, 0x0E
     je .backspace
 
     ; ----------------------------
-    ; TRAITEMENT ASCII IMPRIMABLE
+    ; PRINTABLE ASCII
     ; ----------------------------
     cmp al, 0x20
-    jb .loop                  ; < 0x20 = non imprimable
+    jb .loop
     cmp al, 0x7F
-    jae .loop                 ; >= 0x7F = non imprimable
+    jae .loop
 
-    ; STOCKER ASCII DANS input_buffer
-.store:
-    mov [esi], al
-    inc esi
-    inc ebx
-
-    call print_char_pm
-    jmp .loop
-
-  
+    ; store character
+	mov [esi], al
+	inc esi
+	inc ebx
+    mov byte [cursor_col], 18
+	mov byte [esi], 0
+    call print_pm
+	
+	jmp .loop
 
 
 ; ----------------------------
 ; BACKSPACE
 ; ----------------------------
 .backspace:
-    cmp ebx, 0
-    je .loop
-
     dec ebx
-    dec esi
-    mov byte [esi], 0
+	dec esi
+	mov byte [esi], 0
+	;mov byte [input_len], bl      ; ✔ update length
 
-    mov esi, input_buffer
-    call print_char_pm
-
-    jmp .loop
+	call draw_input_line_pm
+	call set_cursor_input_pm
+	call redraw_screen
+	jmp .loop
 
 
 ; ----------------------------
 ; ENTER
 ; ----------------------------
 .enter:
-    mov byte [esi], 0
-    mov esi, input_buffer
-    call print_pm
-    ret
+   
+	mov byte [esi], 0
+	mov esi, input_buffer
+	call print_pm
+	ret
+
 
 print_string_char_pm:
     ; ESI = pointeur vers la string
@@ -643,7 +654,7 @@ print_char_pm:
     cmp byte [cursor_col], 80
     jb .done
 
-    mov byte [cursor_col], 0
+    mov byte [cursor_col], 18
     inc byte [logical_cursor_row]
 
 .done:
@@ -652,33 +663,38 @@ print_char_pm:
     ret
     
     
-check_auto_scroll:    ;xfer that in16 bits
-    movzx eax, byte [logical_cursor_row]
-    movzx ecx, byte [scroll_offset]
+; check_auto_scroll
+check_auto_scroll:
+    movzx eax, word [logical_cursor_row]
+    movzx ecx, word [scroll_offset]
     sub eax, ecx
-    cmp eax, 25
+    cmp eax, 24
     jb .no_scroll
-    inc byte [scroll_offset]
+
+    inc word [scroll_offset]
     mov byte [screen_dirty], 1
     call redraw_screen
 .no_scroll:
     ret
 
+set_cursor_input_pm:
+    ; cursor_row = 24
+    mov al, 24
+    mov [cursor_row], al
 
-set_cursor_pm:   ;16bits !!
-    movzx eax, byte [logical_cursor_row]
-    movzx ecx, byte [scroll_offset]
-    sub eax, ecx                    ; EAX = visible row
+    ; cursor_col = 18 + input_len
+    movzx eax, byte [input_len]
+    add al, 0
+    mov [cursor_col], al
 
-    cmp eax, 25
-    jae .skip_cursor_update         ; If off-screen, skip
-
-    imul eax, 80                    ; row * 80
+    ; compute VGA offset = row*80 + col
+    movzx eax, byte [cursor_row]
+    imul eax, 80
     movzx edx, byte [cursor_col]
-    add eax, edx                    ; final offset
-    mov bx, ax                      ; BX = cursor position
+    add eax, edx
+    mov bx, ax
 
-    ; Send high byte
+    ; send high byte
     mov dx, 0x3D4
     mov al, 0x0E
     out dx, al
@@ -686,7 +702,7 @@ set_cursor_pm:   ;16bits !!
     mov al, bh
     out dx, al
 
-    ; Send low byte
+    ; send low byte
     mov dx, 0x3D4
     mov al, 0x0F
     out dx, al
@@ -694,6 +710,22 @@ set_cursor_pm:   ;16bits !!
     mov al, bl
     out dx, al
 
+    ret
+    
+; set_cursor_pm
+set_cursor_pm:
+    movzx eax, word [logical_cursor_row]
+    movzx ecx, word [scroll_offset]
+    sub eax, ecx
+
+    cmp eax, 24
+    jae .skip_cursor_update
+
+    imul eax, 80
+    movzx edx, byte [cursor_col]
+    add eax, edx
+    mov bx, ax
+    ; ... same as you had ...
 .skip_cursor_update:
     ret
 
@@ -705,8 +737,12 @@ Clear_screen:
     mov ax, 0x0720
     mov ecx, 80 * 25
     rep stosw
+
     mov byte [cursor_col], 0
-    mov byte [logical_cursor_row], 0
+    mov word [logical_cursor_row], 0
+    mov word [scroll_offset], 0      ; ← important
+    mov byte [screen_dirty], 1
+    call redraw_screen               ; keep model consistent
     ret
 
 redraw_screen:
@@ -720,13 +756,16 @@ redraw_screen:
     push ecx
     push eax
 
+    ; ---------------------------------------------------------
+    ; Draw scrollable region (rows 0–23)
+    ; ---------------------------------------------------------
     movzx eax, byte [scroll_offset]
     imul eax, 160                  ; 80 chars * 2 bytes
     mov esi, text_buffer
     add esi, eax                   ; ESI = start of visible buffer
 
     mov edi, 0xB8000               ; Video memory
-    mov ecx, 25                    ; 25 lines
+    mov ecx, 24                    ; 24 scrollable lines
 
 .redraw_loop:
     push ecx
@@ -738,11 +777,41 @@ redraw_screen:
     add esi, 2
     add edi, 2
     loop .copy_char
+
     pop ecx
     loop .redraw_loop
 
+    ; ---------------------------------------------------------
+    ; Draw scrollbar (still 25 rows tall)
+    ; ---------------------------------------------------------
     call draw_scrollbar
 
+    ; ---------------------------------------------------------
+    ; Draw input line at row 24 (bottom)
+    ; ---------------------------------------------------------
+    mov edi, 0xB8000
+    add edi, 24 * 160              ; row 24 start
+
+    mov esi, input_buffer
+    mov ecx, 80
+
+.draw_input:
+    lodsb
+    test al, al
+    jz .fill_rest
+    mov ah, 0x07
+    stosw
+    loop .draw_input
+
+.fill_rest:
+    mov ax, 0x0720
+.fill_loop:
+    stosw
+    loop .fill_loop
+
+    ; ---------------------------------------------------------
+    ; Restore registers and exit
+    ; ---------------------------------------------------------
     pop eax
     pop ecx
     pop edi
@@ -752,11 +821,10 @@ redraw_screen:
     ret
 
 
-
 draw_scrollbar:
     mov edi, 0xB8000
     add edi, 79 * 2                 ; Last column
-    mov ecx, 25
+    mov ecx, 24
 
 .draw_line:
     mov ax, 0x0720                  ; Light gray space
@@ -766,9 +834,9 @@ draw_scrollbar:
 
     ; Draw thumb
     movzx eax, byte [scroll_offset]
-    mov bl, 100 - 25                ; Max scroll
+    mov bl, 100 - 24                ; Max scroll
     mul bl
-    mov bl, 25         ; divisor
+    mov bl, 24         ; divisor
     movzx ebx, bl      ; zero-extend to 32-bit
     xor edx, edx       ; clear high bits for division
     div ebx            ; eax = eax / ebx
@@ -783,64 +851,86 @@ draw_scrollbar:
     stosw
     ret
 
+
+
+    
 ; --- Protected Mode Print Routine ---
-print_pm:                     ; 32-bit print command
-    ; ESI = pointer to string
-    ; ECX = length of string
+print_pm:
+    push esi
 
-    push esi                 ; preserve ESI (string pointer)
-
-    ; ---------------------------------------------------------
-    ; Compute EDI = address in text_buffer where printing starts
-    ; ---------------------------------------------------------
-
-    movzx eax, byte [logical_cursor_row]   ; logical row (not visible row)
-    movzx ecx, byte [scroll_offset]        ; current scroll offset
-    sub eax, ecx                           ; convert to visible row
-
-    imul eax, 80                           ; row * 80 columns
-    shl eax, 1                             ; *2 bytes per cell
-
-    mov edi, text_buffer                   ; BASE address of text buffer
-    add edi, eax                           ; final write position
-
-    ; ---------------------------------------------------------
-    ; AH = attribute, AL = character (set later by print_string_pm)
-    ; ---------------------------------------------------------
-    mov ah, 0x07                           ; light gray on black
-
-    ; ---------------------------------------------------------
-    ; Print the string into text_buffer
-    ; print_string_pm uses:
-    ;   EDI = write pointer
-    ;   ECX = length
-    ;   ESI = string pointer
-    ; ---------------------------------------------------------
+    movzx eax, word [logical_cursor_row]
+    movzx ecx, word [scroll_offset]
+    sub eax, ecx
+    imul eax, 80
+    shl eax, 1
+    mov edi, text_buffer
+    add edi, eax
+    mov ah, 0x07
     call print_string_pm
-
-    ; ---------------------------------------------------------
-    ; Update logical cursor row/col after printing
-    ; (handles wrapping, newlines, etc.)
-    ; ---------------------------------------------------------
     call update_cursor_row
-
-    ; ---------------------------------------------------------
-    ; Update hardware cursor (visible blinking cursor)
-    ; ---------------------------------------------------------
     call set_cursor_pm
-
-    ; ---------------------------------------------------------
-    ; Mark screen dirty and redraw visible area
-    ; ---------------------------------------------------------
     mov byte [screen_dirty], 1
     call redraw_screen
-
-    pop esi                 ; restore ESI
+    pop esi
     ret
 
 
 
+; ---------------------------------------------------------
+; draw_input_line_pm
+; Draws the shell prompt + input buffer on visible row 24
+; ---------------------------------------------------------
+; Requires:
+;   msg_pm        = prompt string ("admin @ Guil-OS : ")
+;   input_buffer  = user-typed characters
+;   input_len     = number of characters in input_buffer
+; ---------------------------------------------------------
 
+draw_input_line_pm:
+
+    ; --- Set EDI to row 24 in VGA memory ---
+    mov edi, 0xB8000
+    add edi, 24 * 160          ; row 24 start (80*2 bytes)
+
+    ; --- Draw prompt ---
+    mov esi, msg_pm
+.draw_prompt:
+    lodsb
+    test al, al
+    jz .after_prompt
+    mov ah, 0x07
+    stosw
+    jmp .draw_prompt
+
+.after_prompt:
+
+    ; --- Draw input buffer ---
+    mov esi, input_buffer
+    movzx ecx, byte [input_len]
+
+.draw_input:
+    test ecx, ecx
+    jz .fill_rest
+    lodsb
+    mov ah, 0x07
+    stosw
+    dec ecx
+    jmp .draw_input
+
+.fill_rest:
+    ; --- Fill the rest of the line with spaces ---
+    mov ax, 0x0720
+
+    mov ecx, 80                ; total columns
+    sub ecx, 18               ; prompt length
+    movzx edx, byte [input_len]
+    sub ecx, edx               ; subtract input length
+
+.fill_loop:
+    stosw
+    loop .fill_loop
+
+    ret
 
 string_length:
     ; Input: ESI = pointer to string
@@ -995,41 +1085,31 @@ print_string_pm:
 
 
 update_cursor_row:
-    movzx eax, byte [logical_cursor_row]   ; ligne logique
-    movzx ecx, byte [scroll_offset]        ; offset de scroll
-    sub eax, ecx                           ; ligne visible = logical - scroll
-
-    cmp eax, 25                            ; hors écran ?
-    jae .offscreen                         ; oui → clamp
-
-    mov [cursor_row], al                   ; sinon → ligne visible OK
+    movzx eax, word [logical_cursor_row]
+    movzx ecx, word [scroll_offset]
+    sub eax, ecx
+    cmp eax, 24
+    jae .offscreen
+    mov [cursor_row], al
     ret
-
 .offscreen:
-    mov byte [cursor_row], 24              ; clamp à la dernière ligne visible
+    mov byte [cursor_row], 24
     ret
 
 
 newline_pm:
+    inc word [logical_cursor_row]
+    mov byte [cursor_col], 0
 
-    inc byte [logical_cursor_row]      ; avancer la ligne logique (pas la ligne visible)
-    mov byte [cursor_col], 0           ; retour à la colonne 0
+    call check_auto_scroll
 
-    ; ---------------------------------------------------------
-    ; Recalculer EDI pour pointer dans le text_buffer
-    ; MAIS ATTENTION : ceci utilise la ligne LOGIQUE brute.
-    ; Si tu scrolles, logical_cursor_row continue d'augmenter.
-    ; ---------------------------------------------------------
-
-    movzx eax, byte [logical_cursor_row] ; EAX = ligne logique
-    imul eax, 80                          ; ligne * 80 colonnes
-    movzx ecx, byte [cursor_col]          ; colonne (toujours 0 ici)
-    add eax, ecx                           ; ajouter la colonne
-    shl eax, 1                             ; *2 (caractère + attribut)
-
-    mov edi, text_buffer                   ; base du buffer texte
-    add edi, eax                           ; EDI = nouvelle position d'écriture
-
+    movzx eax, word [logical_cursor_row]
+    movzx ecx, word [scroll_offset]
+    sub eax, ecx
+    imul eax, 80
+    shl eax, 1
+    mov edi, text_buffer
+    add edi, eax
     ret
 
 
@@ -1070,14 +1150,21 @@ msg_pm1: db "press enter to open shell", 0
 msg_pm: db "ADMIN @ Guil-OS: ", 0
 text_buffer: times 8000 dw 0x0720
 
+logical_cursor_row  dw 0
+scroll_offset       dw 0
+cursor_row          db 0
+cursor_col          db 0
 
-scroll_offset db 0                   ; Current top line index
+
+
+;scroll_offset db 0                   ; Current top line index
 screen_dirty db 1
-logical_cursor_row db 0   ; Tracks actual row in the full buffer
+;logical_cursor_row db 0   ; Tracks actual row in the full buffer
 current_input:   times 128 db 0           ; Buffer d’entrée courant
-cursor_row db 0
-cursor_col db 0
+;cursor_row db 0
+;cursor_col db 0
 input_buffer times 512 db 0
+input_len db 0   
 msg_help:
 db 0x0A
 db "  cmd:  -help <list command>", 0x0A
