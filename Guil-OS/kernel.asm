@@ -78,15 +78,17 @@ protected_mode:
     call newline_pm
     mov esi, msg_pm
     call print_pm
-    call clear_input_buffer
+    call newline_pm
     call clear_keyboard_buffer
+    
     call clear_input_line
+   
     call read_input_pm
-    ;mov byte [esi], 0
-	call print_pm
-	mov [input_buffer], esi
+    
+	call newline_pm
+	
     call parse_command            ; Parse and execute
-    jmp .start_shell          ; Loop back
+    jmp .start_shell        ; Loop back
 
 
 
@@ -112,10 +114,10 @@ parse_command:
 
     ; Check for "-lsss"
 
-    mov si, input_buffer
+    mov esi, input_buffer
     mov edx, cmd_ls_inline
     mov edi, edx
-    mov ecx, 4
+    mov ecx, 3
     call strncmp32
     cmp al, 1
     je .handler_ls
@@ -123,7 +125,6 @@ parse_command:
 
       ; Check for "-cat"
 
-    mov si, input_buffer
     mov esi, input_buffer
     mov edx, cmd_cat_inline
     mov edi, edx
@@ -182,7 +183,7 @@ parse_command:
 
 
 .advance_cursor:
-   
+    call clear_input_buffer
     
     ret
 
@@ -196,7 +197,7 @@ wait_for_enter:
     jz .wait               ; rien reçu → attendre
 
     cmp al, 0x1C            ; ASCII Enter = 0x1C 
-    jne .wait
+    je .wait
 
     ret
 
@@ -231,69 +232,84 @@ tokenize:
     ret
 
 
-read_sectors:
-    ; Inputs:
-    ;   EAX = LBA sector number
-    ;   ECX = number of sectors to read
-    ;   EDI = destination address in memory
+; ============================================================
+; read_sectors_ata_pm
+; EAX = LBA (28-bit)
+; ECX = number of sectors
+; EDI = destination buffer
+; ============================================================
+
+read_sectors_ata_pm:
+    pushad
 
 .next_sector:
-    push eax
-    push ecx
-
-    ; Extract LBA bytes
-    mov ebx, eax
-    mov dx, 0x1F2         ; Sector count
+    ; ----------------------------
+    ; 1) Sector count
+    ; ----------------------------
+    mov dx, 0x1F2
     mov al, 1
     out dx, al
 
-    mov dx, 0x1F3         ; LBA bits 0–7
-    mov al, bl
+    ; ----------------------------
+    ; 2) LBA low byte
+    ; ----------------------------
+    mov dx, 0x1F3
+    mov al, al            ; AL = LBA[7:0]
     out dx, al
 
-    mov dx, 0x1F4         ; LBA bits 8–15
-    mov al, bh
+    ; ----------------------------
+    ; 3) LBA mid byte
+    ; ----------------------------
+    mov dx, 0x1F4
+    mov al, ah            ; AH = LBA[15:8]
     out dx, al
 
-    shr ebx, 16
-    mov dx, 0x1F5         ; LBA bits 16–23
-    mov al, bl
+    ; ----------------------------
+    ; 4) LBA high byte
+    ; ----------------------------
+    mov dx, 0x1F5
+    shr eax, 16
+    mov al, al            ; AL = LBA[23:16]
     out dx, al
 
-    mov dx, 0x1F6         ; Drive/head + LBA bits 24–27
-    mov al, 0xE0
-    or al, bh             ; LBA bits 24–27
+    ; ----------------------------
+    ; 5) Drive + LBA bits 24–27
+    ; ----------------------------
+    mov dx, 0x1F6
+    mov al, 0xE0          ; 0xE0 = LBA mode + master
+    or  al, ah            ; AH = LBA[27:24]
     out dx, al
 
-    mov dx, 0x1F7         ; Command port
-    mov al, 0x20          ; Read sectors (PIO)
-    out dx, al
-
-.wait:
+    ; ----------------------------
+    ; 6) Command: READ SECTORS (0x20)
+    ; ----------------------------
     mov dx, 0x1F7
+    mov al, 0x20
+    out dx, al
+
+.wait_drq:
     in al, dx
+    test al, 8            ; DRQ set?
+    jz .wait_drq
 
-    test al, 0x08         ; DRQ bit
-    jz .wait
-
-    ; Read 256 words (512 bytes)
-    mov cx, 256
+    ; ----------------------------
+    ; 7) Read 512 bytes = 256 words
+    ; ----------------------------
     mov dx, 0x1F0
-.read_loop:
+    mov ebx, 256
+
+.read_word:
     in ax, dx
-    stosw
-    loop .read_loop
+    mov [edi], ax
+    add edi, 2
+    dec ebx
+    jnz .read_word
 
-    pop ecx
-    pop eax
+    ; Next sector?
     dec ecx
-    jz .done
+    jnz .next_sector
 
-    inc eax               ; Next LBA sector
-    add edi, 512         ; Advance buffer
-    jmp .next_sector
-
-.done:
+    popad
     ret
 
 strcmp32:
@@ -378,22 +394,23 @@ parse_number:
 
 load_and_print_file:
     mov ecx, file_table_start      ; ECX = pointer to file table
-    mov ebx, esi                   ; EBX = pointer to filename (e.g., "hello.txt")
+    mov ebx, esi                   ; EBX = pointer to filename (input)
 
 .next_line:
     mov esi, ecx                   ; ESI = start of current line
-    mov edi, ebx                   ; EDI = reset filename pointer
+    mov edi, ebx                   ; EDI = filename pointer
 
 .compare_loop:
     mov al, [esi]
-    cmp al, '|'
-    je .match_check
 
     cmp al, 0
     je .not_found
 
     cmp al, 0x0A
     je .advance_line
+
+    cmp al, '|'
+    je .match_check
 
     mov dl, [edi]
     cmp dl, al
@@ -406,19 +423,27 @@ load_and_print_file:
 .match_check:
     mov dl, [edi]
     cmp dl, 0
-    jne .advance_line             ; Filename not fully matched
+    jne .advance_line
 
-    ; Match found — ESI points to sector string
-    inc esi
-    call parse_number             ; EAX = sector number
+    ; -----------------------------------------
+    ; ICI : ESI pointe sur le '|' de la bonne ligne
+    ; -----------------------------------------
 
-    mov ecx, 1                    ; Load 1 sector
-    mov edi, db_file              ; Destination buffer
-    call read_sectors
-    mov byte [db_file + 512], 0
+    inc esi              ; maintenant ESI pointe sur le premier chiffre
+    call parse_number    ; EAX = numéro de secteur
 
-    mov si, db_file
-    call print_pm
+    ; -----------------------------------------
+    ; Conversion secteur → adresse RAM
+    ; -----------------------------------------
+
+    mov ebx, 0x00008000        ; base RAM des 128 secteurs
+    sub eax, 2                 ; secteur 2 = offset 0
+    imul eax, eax, 512         ; offset = (S - 2) * 512
+    add eax, ebx               ; adresse RAM du secteur S
+
+    mov esi, eax               ; adresse RAM du secteur
+	mov byte [esi + 511], 0    ; termine la string
+	call print_pm
     ret
 
 .advance_line:
@@ -437,9 +462,11 @@ load_and_print_file:
     jmp .next_line
 
 .not_found:
-    mov si, msg_file_not_found
+    mov esi, msg_file_not_found
     call print_pm
     ret
+
+
 
 
 
@@ -470,14 +497,15 @@ strcmp:    ;si <--
     ret
 
 scancode_to_ascii:
-    cmp al, 0x39
-    ja .unknown
+    cmp al, 0x7F          ; Set 2 max useful range
+    ja  .unknown
+
     movzx ebx, al
-    mov al, [scancode_table + ebx]
+    mov   al, [scancode_table + ebx]
     ret
 
 .unknown:
-    mov al, 0
+    xor al, al
     ret
 
 clear_input_buffer:
@@ -508,91 +536,122 @@ clear_input_line:
 read_input_pm:
 
     mov esi, input_buffer     ; pointeur d’écriture
-    xor bx, bx                ; compteur de caractères
+    xor ebx, ebx              ; compteur de caractères
 
-.read_key:
-    call get_key_pm           ; AL = ascii (ou 0), BL = scancode
-    test al, al
-    jz .read_key              ; rien → attendre
+.loop:
+    ; attendre une touche
+.wait:
+    call get_key_pm           ; AL = ASCII, BL = scancode
+    test bl, bl
+    jz .wait                  ; aucune touche → attendre
 
-    
-    
-    
-    
-    ; --- ENTER ---
-    cmp bl, 0x1C              ; Enter (Set 2)
-    
-    je .done
+    ; ----------------------------
+    ; TRAITEMENT DES TOUCHES SPÉCIALES
+    ; ----------------------------
 
-    ; --- BACKSPACE ---
-    cmp bl, 0x66              ; Backspace (Set 2)
+    ; ENTER
+    cmp bl, 0x1C
+    je .enter
+
+    ; BACKSPACE
+    cmp bl, 0x0E
     je .backspace
 
-    ; --- IGNORE NON-PRINTABLE ---
-    test al, al
-    jz .control_or_ignore
-
+    ; ----------------------------
+    ; TRAITEMENT ASCII IMPRIMABLE
+    ; ----------------------------
     cmp al, 0x20
-    jb .control_or_ignore
+    jb .loop                  ; < 0x20 = non imprimable
+    cmp al, 0x7F
+    jae .loop                 ; >= 0x7F = non imprimable
 
-    cmp al, 0x7E
-    ja .control_or_ignore
+    ; STOCKER ASCII DANS input_buffer
+.store:
+    mov [esi], al
+    inc esi
+    inc ebx
 
-	; --- PRINTABLE CHARACTER ---
-	
-   mov [esi], al
-   inc esi
-   inc bx	
+    call print_char_pm
+    jmp .loop
 
-	jmp .read_key
-
-.control_or_ignore:
-    jmp .read_key
+  
 
 
+; ----------------------------
+; BACKSPACE
+; ----------------------------
 .backspace:
-    cmp bx, 0
-    je .read_key              ; rien à effacer
+    cmp ebx, 0
+    je .loop
 
-    dec bx
-    dec esi                   ; reculer dans input_buffer
+    dec ebx
+    dec esi
+    mov byte [esi], 0
 
-    ; effacer à l’écran (ta logique existante)
-    ; -----------------------------------------
-    cmp byte [cursor_col], 0
-    je .read_key
-    dec byte [cursor_col]
+    mov esi, input_buffer
+    call print_char_pm
 
-    mov ax, 0x0720
-    movzx ecx, byte [logical_cursor_row]
-    imul ecx, 80
-    movzx edx, byte [cursor_col]
-    add ecx, edx
-    shl ecx, 1
-    mov edi, text_buffer
-    add edi, ecx
-    stosw
-
-    mov byte [screen_dirty], 1
-    call update_cursor_row
-    call set_cursor_pm
-    call redraw_screen
-    jmp .read_key
+    jmp .loop
 
 
-.done:
-	
-     
-	 
-	mov [input_buffer], esi
-     
-	 
-     
-    
+; ----------------------------
+; ENTER
+; ----------------------------
+.enter:
+    mov byte [esi], 0
+    mov esi, input_buffer
+    call print_pm
     ret
 
+print_string_char_pm:
+    ; ESI = pointeur vers la string
+.next:
+    mov al, [esi]
+    test al, al
+    jz .done
 
+    call print_char_pm
 
+    inc esi
+    jmp .next
+
+.done:
+    ret
+    
+    
+print_char_pm:
+    ; AL = caractère ASCII
+    ; utilise logical_cursor_row et cursor_col
+
+    push eax
+    push edi
+
+    ; calcul adresse dans text_buffer
+    movzx eax, byte [logical_cursor_row]
+    imul eax, 80
+    movzx edi, byte [cursor_col]
+    add eax, edi
+    shl eax, 1
+    mov edi, [text_buffer]
+    add edi, eax
+
+    mov ah, 0x07        ; attribut
+    mov [edi], ax       ; écrire caractère + attribut
+
+    ; avancer le curseur
+    inc byte [cursor_col]
+    cmp byte [cursor_col], 80
+    jb .done
+
+    mov byte [cursor_col], 0
+    inc byte [logical_cursor_row]
+
+.done:
+    pop edi
+    pop eax
+    ret
+    
+    
 check_auto_scroll:    ;xfer that in16 bits
     movzx eax, byte [logical_cursor_row]
     movzx ecx, byte [scroll_offset]
@@ -982,11 +1041,25 @@ newline_pm:
 
 section .data
 align 512
-%include "asm/data.asm"
+
+file_table_start:
+    db "elie|124", 0x0A
+    db "gui|125", 0x0A
+    db "hello|126", 0x0A
+    db "humm|127", 0x0A
+    db 0
 
 
 
-
+dap_packet:
+    db 0x10
+    db 0
+dap_count:
+    dw 0
+dap_buffer:
+    dd 0
+dap_lba:
+    dq 0
 
 
 
@@ -1039,12 +1112,16 @@ msg_lss_detected: db "LSS command detected", 0
 db_file times 512 db 0x55   ; Fill 512 bytes with 0x55
 
 shift_state db 0
+
 ctrl_state  db 0
 alt_state   db 0
 
-keyboard_head db 0
-keyboard_tail db 0
-keyboard_buf  times 128 db 0
+keyboard_buf:
+    times 128 db 0      ; ASCII
+keyboard_buf_sc:
+    times 128 db 0      ; scancode
+keyboard_head: db 0
+keyboard_tail: db 0
 
 start_file:
 db 0x0A
@@ -1058,38 +1135,46 @@ db 0x0A
 db 0
 scancode_table:
     ; 00–0F
-    db 0,0,"1","2","3","4","5","6","7","8","9","0","-","=",0,0
-    ; 10–1F
-    db "q","w","e","r","t","y","u","i","o","p","[","]",0,0,"a","s"
-    ; 20–2F
-    db "d","f","g","h","j","k","l",";","'","`",0,"\\","z","x","c","v"
-    ; 30–3F
-    db "b","n","m",",",".","/",0,"*",0," ",0,0,0,0,0,0
-    ; 40–4F
-    times 16 db 0
-    ; 50–5F
-    times 16 db 0
-    ; 60–6F
-    times 16 db 0
-    ; 70–7F
-    times 16 db 0
-    ; 80–8F
-    times 16 db 0
-    ; 90–9F
-    times 16 db 0
-    ; A0–AF
-    times 16 db 0
-    ; B0–BF
-    times 16 db 0
-    ; C0–CF
-    times 16 db 0
-    ; D0–DF
-    times 16 db 0
-    ; E0–EF
-    times 16 db 0
-    ; F0–FF
-    times 16 db 0
+    db 0,  0x1B,0x31,0x32,0x33,0x34,0x35,0x36
+    db 0x37,0x38,0x39,0x30,0x2D,0x3D,0x08,0x09
 
+    ; 10–1F
+    db 0x71,0x77,0x65,0x72,0x74,0x79,0x75,0x69
+    db 0x6F,0x70,0x5B,0x5D,0x0D,0,    0x61,0x73
+
+    ; 20–2F
+    db 0x64,0x66,0x67,0x68,0x6A,0x6B,0x6C,0x3B
+    db 0x27,0x60,0,    0x5C,0x7A,0x78,0x63,0x76
+
+    ; 30–3F
+    db 0x62,0x6E,0x6D,0x2C,0x2E,0x2F,0,    0x2A
+    db 0,    0x20,0,    0,    0,    0,    0,    0
+
+    ; 40–7F
+    times 64 db 0
+
+
+scancode_shifted:
+    ; 00–0F
+    db 0,  0x1B,0x21,0x40,0x23,0x24,0x25,0x5E
+    db 0x26,0x2A,0x28,0x29,0x5F,0x2B,0x08,0x09
+
+    ; 10–1F
+    db 0x51,0x57,0x45,0x52,0x54,0x59,0x55,0x49
+    db 0x4F,0x50,0x7B,0x7D,0x0D,0,    0x41,0x53
+
+    ; 20–2F
+    db 0x44,0x46,0x47,0x48,0x4A,0x4B,0x4C,0x3A
+    db 0x22,0x7E,0,    0x7C,0x5A,0x58,0x43,0x56
+
+    ; 30–3F
+    db 0x42,0x4E,0x4D,0x3C,0x3E,0x3F,0,    0x2A
+    db 0,    0x20,0,    0,    0,    0,    0,    0
+
+    ; 40–7F
+    times 64 db 0
+
+    
 [BITS 32]
 
 idt_start:
@@ -1102,6 +1187,8 @@ idt_descriptor:
     
     
 global isr_default
+global isr_keyboard
+global isr_timer
 
 isr_default:
     cli
@@ -1198,7 +1285,7 @@ remap_pic:
     ret
     
     
-global isr_timer
+
 
 isr_timer:
     ; EOI au PIC
@@ -1234,136 +1321,96 @@ install_keyboard_irq:
     call set_idt_entry
     ret
     
-global isr_keyboard
+
+
+; ============================================================
+; IRQ1 - Keyboard ISR (Set 1, US, ASCII only)
+; ============================================================
 
 isr_keyboard:
-    in al, 0x60
-    cmp al, 0
-    je .eoi            ; null → ignore safely
-    mov bl, al
+    pushad
 
-    ; Noise / firmware junk
-    cmp al, 0xFA       ; ACK
-    je .eoi
-    cmp al, 0xFE       ; RESEND
-    je .eoi
-    cmp al, 0xAA       ; BAT OK
-    je .eoi
+    ; Lire scancode brut (Set 1)
+    in   al, 0x60
+    mov  bl, al                ; garder scancode
 
-    ; Ignore releases (bit 7)
+    ; Ignorer break codes (bit 7 = 1)
     test bl, 0x80
-    jnz .eoi
+    jnz  .eoi
 
-    ; Extended prefix
-    cmp bl, 0xE0
-    je .extended
+    ; Ignorer codes hors plage
+    cmp bl, 0x58               ; max Set 1 = 0x58
+    ja  .eoi
 
-    ; SHIFT
-    cmp bl, 0x2A
-    je .shift_down
-    cmp bl, 0x36
-    je .shift_down
-
-    ; CTRL
-    cmp bl, 0x1D
-    je .ctrl_down
-
-    ; ALT
-    cmp bl, 0x38
-    je .alt_down
-
-    ; Convert scancode → ASCII
-    
-    
+    ; Conversion ASCII (non-shift)
     movzx ebx, bl
-    mov al, [scancode_table + ebx]
+    mov   al, [scancode_table + ebx]
 
-    test al, al
-    jz .eoi
+    ; SHIFT actif ?
+    cmp byte [shift_state], 0
+    je  .store
 
-    ; SHIFT on letters
-    cmp byte [shift_state], 1
-    jne .store_char
-    cmp al, 'a'
-    jb .store_char
-    cmp al, 'z'
-    ja .store_char
-    sub al, 32
-
-.store_char:
+    ; SHIFTED ASCII
+    movzx ebx, bl
+    mov   al, [scancode_shifted + ebx]
+    
+    
+    
+.store:
+    ; Stockage ASCII + SCANCODE dans buffer circulaire
     movzx ecx, byte [keyboard_head]
     mov [keyboard_buf + ecx], al
-    inc byte [keyboard_head]
-    and byte [keyboard_head], 127
-    jmp .eoi
+    mov [keyboard_buf_sc + ecx], bl
 
-; --- Extended keys ---
-.extended:
-    ; Wait for second byte (modern laptop safe)
-.wait2:
-    in al, 0x64
-    test al, 1
-    jz .wait2
-
-    in al, 0x60
-    mov bl, al
-
-    ; Ignore fake USB sequences
-    cmp bl, 0x00
-    je .eoi
-    cmp bl, 0x2A
-    je .eoi
-    cmp bl, 0xAA
-    je .eoi
-    cmp bl, 0xF0
-    je .eoi
-
-    cmp bl, 0x4B
-    je .arrow_left
-    cmp bl, 0x4D
-    je .arrow_right
-    cmp bl, 0x48
-    je .arrow_up
-    cmp bl, 0x50
-    je .arrow_down
-    jmp .eoi
-
-.arrow_left:  mov al, 0x81  ; your codes
-jmp .store_char
-.arrow_right: mov al, 0x82
-jmp .store_char
-.arrow_up:    mov al, 0x83
-jmp .store_char
-.arrow_down:  mov al, 0x84
-jmp .store_char
-
-.shift_down:  mov byte [shift_state], 1
-jmp .eoi
-.ctrl_down:   mov byte [ctrl_state], 1
-jmp .eoi
-.alt_down:    mov byte [alt_state], 1
-jmp .eoi
+    inc cl
+    and cl, 0x7F
+    mov [keyboard_head], cl
+    
+    
 
 .eoi:
     mov al, 0x20
     out 0x20, al
+    popad
     iretd
+
+
+
     
+; ============================================================
+; get_key_pm
+; Sorties :
+;   AL = ASCII (0 si non imprimable)
+;   BL = scancode brut (toujours utile)
+; ============================================================
+; ------------------------------------------------------------
+; get_key_pm (final fortified)
+;  AL = ASCII imprimable ou 0
+;  BL = scancode make (0 si aucune touche)
+; ------------------------------------------------------------
+; AL = ASCII ou 0 si aucune touche
+; BL = 0 (tu pourras plus tard y mettre un scancode si tu stockes ça aussi)
+; AL = ASCII (0 si aucune touche)
+; BL = scancode (0 si aucune touche)
 get_key_pm:
-    mov bl, [keyboard_head]
-    mov bh, [keyboard_tail]
-    cmp bl, bh
+    movzx eax, byte [keyboard_head]
+    movzx ecx, byte [keyboard_tail]
+
+    cmp eax, ecx
     je .no_key
 
-    movzx ebx, bh
-    mov al, [keyboard_buf + ebx]
+    mov al, [keyboard_buf + ecx]   ; ASCII
+    mov bl, [keyboard_buf_sc    + ecx]   ; SCANCODE
 
-    inc byte [keyboard_tail]
-    and byte [keyboard_tail], 127
+    inc cl
+    and cl, 0x7F
+    mov [keyboard_tail], cl
+    
     ret
 
 .no_key:
     xor al, al
+    xor bl, bl
     ret
 
 

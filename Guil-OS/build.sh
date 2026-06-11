@@ -2,7 +2,7 @@
 
 # --- Config ---
 SECTOR_SIZE=512
-START_SECTOR=124
+START_SECTOR=123
 IMG=os.img
 FILE_TABLE=file_table.txt
 DATA_ASM=asm/data.asm
