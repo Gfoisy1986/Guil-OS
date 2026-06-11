@@ -1169,9 +1169,9 @@ msg_help:
 db 0x0A
 db "  cmd:  -help <list command>", 0x0A
 db 0x0A
-db "  cmd:  -lss <list file>", 0x0A
+db "  cmd:  -ls <list file>", 0x0A
 db 0x0A
-db "  cmd:  -cat <require file>", 0x0A
+db "  cmd:  -cat 'filename' <print specified file>", 0x0A
 db 0x0A
 db 0
 msg_ls:
