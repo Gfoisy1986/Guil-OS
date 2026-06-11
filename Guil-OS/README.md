@@ -3,6 +3,7 @@
  
 ### Version V0.1-Devel x86_32 bits protected mode
 
+-Currently finish hazzardous pointer n starting integrating FAT32... A New bootloader incoming....
 
 
 - file/    File_system folder
@@ -97,7 +98,7 @@ qemu-system-i386 -vga std -drive format=raw,file=os.img
 
 * ADD repair PAGE_UP DOWN & scrolling & SCROLLBAR...
 
-* [DONE] Repair hazzardous pointer in the SHELL...
+* [HAHAHA omg have to redone i loss data!] Repair hazzardous pointer in the SHELL...
 
 * IF SO add -wrt CMD & -crt CMD (create [-crt]  & write [-wrt] ) ...
 
