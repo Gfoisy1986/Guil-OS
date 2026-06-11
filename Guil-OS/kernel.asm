@@ -69,30 +69,41 @@ protected_mode:
 
 
 .start_shell:
-    
-    call Clear_screen
-    
 
+    call Clear_screen
+
+    ; print welcome/help in scroll area
     mov esi, msg_help
     call print_pm
 
     call clear_keyboard_buffer
     call clear_input_line
 
-    ; place cursor after prompt
-    mov byte [cursor_row], 24
-    mov byte [cursor_col], 0   ; adjust to real prompt length
-    call set_cursor_input_pm
-    
-    call read_input_pm           ; read user input on row 24
+.shell_loop:
 
-    call newline_pm              ; add newline to scroll area
+    ; always redraw input line before reading
+    ;call draw_input_line_pm
+
+    ; place cursor after prompt (18 chars)
+    ;mov byte [cursor_row], 24
+   ; mov byte [cursor_col], 18
+    ;call set_cursor_input_pm
+
+    ; read user input on row 24
+    call read_input_pm
+
+    ; print newline in scroll area
+    call newline_pm
+
+    ; print the command in scroll area
     mov esi, input_buffer
     call print_pm
-    call newline_pm              ; add newline to scroll area
-    
-    call parse_command           ; execute command
-    jmp .start_shell
+    call newline_pm
+
+    ; execute command
+    call parse_command
+
+    jmp .shell_loop
 
 
 
@@ -538,6 +549,73 @@ clear_input_line:
     
 
 ; ---------------------------------------------------------
+; print_string_pm_input
+; ESI = string
+; EDI = position dans la ligne 24 (déjà calculée)
+; cursor_col = mis à jour
+; ---------------------------------------------------------
+
+print_string_pm_input:
+    
+    push esi                        ; sauvegarde du pointeur de chaîne
+
+.next_char:
+    lodsb                           ; AL = prochain caractère, ESI++
+    test al, al                     ; fin de chaîne (AL = 0) ?
+    jz .done                        ; oui → sortir
+
+                      ; oui → aller à la ligne
+
+    ; --- écrire caractère dans text_buffer ---
+    mov ah, 0x07                    ; attribut (gris sur noir)
+    mov [edi], ax                   ; écrire caractère + attribut
+    
+    
+
+    ; --- fin de ligne → passer à la suivante ---
+    
+    jmp .next_char
+
+
+    ret
+
+.done:
+    pop esi                         ; restaurer ESI
+    ret
+    
+ 
+; ---------------------------------------------------------
+; print_pm_input
+; ESI = string à imprimer sur la ligne 24
+; ---------------------------------------------------------
+
+print_pm_input:
+    push esi
+
+    
+   
+
+  
+
+   
+    call print_string_pm_input
+
+    ; return cursor to input line
+    mov byte [cursor_row], 24
+    movzx edx, byte [cursor_col]
+    add dl, 1
+    mov [cursor_col], dl
+    call set_cursor_input_pm
+    
+     mov byte [screen_dirty], 1
+    call redraw_screen
+    
+    pop esi
+    ret
+    
+    
+       
+; ---------------------------------------------------------
 ; read_input_pm
 ; Reads user input on fixed bottom line (row 24)
 ; Uses:
@@ -581,10 +659,9 @@ read_input_pm:
 	mov [esi], al
 	inc esi
 	inc ebx
-    mov byte [cursor_col], 18
-	mov byte [esi], 0
-    call print_pm
+
 	
+    
 	jmp .loop
 
 
@@ -595,11 +672,7 @@ read_input_pm:
     dec ebx
 	dec esi
 	mov byte [esi], 0
-	;mov byte [input_len], bl      ; ✔ update length
-
-	call draw_input_line_pm
-	call set_cursor_input_pm
-	call redraw_screen
+	
 	jmp .loop
 
 
@@ -649,13 +722,11 @@ print_char_pm:
     mov ah, 0x07        ; attribut
     mov [edi], ax       ; écrire caractère + attribut
 
-    ; avancer le curseur
-    inc byte [cursor_col]
-    cmp byte [cursor_col], 80
+   
     jb .done
 
-    mov byte [cursor_col], 18
-    inc byte [logical_cursor_row]
+    
+    
 
 .done:
     pop edi
@@ -682,10 +753,7 @@ set_cursor_input_pm:
     mov al, 24
     mov [cursor_row], al
 
-    ; cursor_col = 18 + input_len
-    movzx eax, byte [input_len]
-    add al, 0
-    mov [cursor_col], al
+    
 
     ; compute VGA offset = row*80 + col
     movzx eax, byte [cursor_row]
@@ -712,20 +780,45 @@ set_cursor_input_pm:
 
     ret
     
+; ---------------------------------------------------------
 ; set_cursor_pm
+; Met à jour le curseur matériel pour la zone scrollable
+; (lignes 0–23). La ligne 24 est ignorée.
+; ---------------------------------------------------------
+
 set_cursor_pm:
+    ; visible_row = logical_cursor_row - scroll_offset
     movzx eax, word [logical_cursor_row]
     movzx ecx, word [scroll_offset]
     sub eax, ecx
 
+    ; si visible_row >= 24 → hors écran → ignorer
     cmp eax, 24
     jae .skip_cursor_update
 
+    ; offset = visible_row * 80 + cursor_col
     imul eax, 80
     movzx edx, byte [cursor_col]
     add eax, edx
-    mov bx, ax
-    ; ... same as you had ...
+
+    mov bx, ax        ; BX = position VGA
+
+    ; high byte
+    mov dx, 0x3D4
+    mov al, 0x0E
+    out dx, al
+    mov dx, 0x3D5
+    mov al, bh
+    out dx, al
+
+    ; low byte
+    mov dx, 0x3D4
+    mov al, 0x0F
+    out dx, al
+    mov dx, 0x3D5
+    mov al, bl
+    out dx, al
+
 .skip_cursor_update:
     ret
 
@@ -735,7 +828,7 @@ set_cursor_pm:
 Clear_screen:
     mov edi, 0xB8000
     mov ax, 0x0720
-    mov ecx, 80 * 25
+    mov ecx, 80 * 24
     rep stosw
 
     mov byte [cursor_col], 0
@@ -782,35 +875,53 @@ redraw_screen:
     loop .redraw_loop
 
     ; ---------------------------------------------------------
-    ; Draw scrollbar (still 25 rows tall)
+    ; Draw scrollbar
     ; ---------------------------------------------------------
     call draw_scrollbar
 
     ; ---------------------------------------------------------
     ; Draw input line at row 24 (bottom)
     ; ---------------------------------------------------------
+
+    ; EDI = start of row 24
     mov edi, 0xB8000
-    add edi, 24 * 160              ; row 24 start
+    add edi, 24 * 160
 
-    mov esi, input_buffer
-    mov ecx, 80
-
-.draw_input:
+    ; --- draw prompt (18 chars) ---
+    mov esi, msg_pm            ; "admin @ guil-os : "
+.draw_prompt:
     lodsb
     test al, al
-    jz .fill_rest
+    jz .after_prompt
     mov ah, 0x07
     stosw
-    loop .draw_input
+    jmp .draw_prompt
+
+.after_prompt:
+
+    ; --- draw input buffer ---
+    mov esi, input_buffer
+    movzx ecx, byte [input_len]
+
+.draw_input:
+    test ecx, ecx
+    jz .fill_rest
+    lodsb
+    mov ah, 0x07
+    stosw
+    dec ecx
+    jmp .draw_input
 
 .fill_rest:
-    mov ax, 0x0720
+    
+    
+
 .fill_loop:
     stosw
     loop .fill_loop
 
     ; ---------------------------------------------------------
-    ; Restore registers and exit
+    ; Restore registers
     ; ---------------------------------------------------------
     pop eax
     pop ecx
@@ -858,6 +969,7 @@ draw_scrollbar:
 print_pm:
     push esi
 
+    ; compute EDI for scroll region
     movzx eax, word [logical_cursor_row]
     movzx ecx, word [scroll_offset]
     sub eax, ecx
@@ -865,12 +977,17 @@ print_pm:
     shl eax, 1
     mov edi, text_buffer
     add edi, eax
+
     mov ah, 0x07
     call print_string_pm
+
     call update_cursor_row
     call set_cursor_pm
+
     mov byte [screen_dirty], 1
     call redraw_screen
+
+
     pop esi
     ret
 
