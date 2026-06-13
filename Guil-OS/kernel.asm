@@ -108,9 +108,11 @@ parse_command:
     
     
     
-    mov si, input_buffer
+    
 
     ; Check for "-help"
+    
+    mov si, input_buffer
     mov di, cmd_help_inline
     push si
     call strcmp
@@ -130,7 +132,7 @@ parse_command:
     je .handler_ls
 
 
-      ; Check for "-cat"
+    ; Check for "-cat"
 
     mov esi, input_buffer
     mov edx, cmd_cat_inline
@@ -142,26 +144,26 @@ parse_command:
 
 
     ; Unknown command
+    
     mov esi, msg_unknown
     call print_pm
     jmp .advance_cursor
 
 .handler_help:
+
     mov esi, msg_help
     call print_pm
     jmp .advance_cursor
 
 .handler_ls:
    
-    
-    
-    
     call newline_pm
     mov esi, file_table_start
     call print_pm
     jmp .advance_cursor
 
 .handler_cat:
+
     ; Tokenize input to extract filename
 
     call tokenize32         ; Assumes result is stored in [fichier] label
