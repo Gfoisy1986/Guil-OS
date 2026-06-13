@@ -1,0 +1,437 @@
+1. Boot & initialization
+Boot loader:  
+Loads the kernel image from disk/ROM into RAM, sets basic CPU state, jumps to kernel entry point.
+
+Early init:  
+Sets up stack, clears BSS, initializes global variables, detects CPU features (32/64‑bit, SSE, etc.).
+
+Hardware discovery:  
+Probes memory size, PCI devices, timers, basic chipset info, and builds an internal “hardware table”.
+
+
+
+
+
+
+2. Memory management
+Physical memory manager (PMM):  
+Tracks which physical pages are free/used, hands out pages to higher layers (page allocator).
+
+Virtual memory manager (VMM):  
+Sets up page tables, maps kernel space, user space, stacks, heaps, and shared regions.
+
+Allocator (kmalloc/kfree):  
+Provides small/medium allocations for kernel structures (lists, tables, buffers).
+
+
+
+
+
+
+3. Tasking & scheduling
+Task control block (TCB):  
+Structure that holds registers, stack pointer, state, priority, and metadata for each task/thread.
+
+Scheduler:  
+Chooses which task runs next (round‑robin, priority, etc.), handles time slices and preemption.
+
+Context switch:  
+Saves current task registers, loads next task registers, switches stack, updates MMU if needed.
+
+
+
+
+
+
+4. Interrupts & timers
+Interrupt descriptor table (IDT):  
+Maps hardware interrupts and exceptions to kernel handlers.
+
+PIC/APIC setup:  
+Configures the interrupt controller, masks/unmasks IRQs, sets priorities.
+
+Timer (PIT/HPET/TSC):  
+Provides periodic ticks for scheduler, timeouts, and profiling.
+
+
+
+
+
+5. Syscall interface (ABI)
+Syscall table:  
+List of all kernel services (file I/O, process control, IPC, graphics, network, etc.) with IDs.
+
+Entry stub:  
+User→kernel transition (int, syscall instruction, or fastcall), saves user context, validates arguments.
+
+Dispatch:  
+Looks up syscall ID, calls the right kernel function, returns result to user space.
+-
+
+
+
+
+
+6. Device & driver layer
+Driver model:  
+Common interface for devices (init, read, write, ioctl, shutdown).
+
+Core drivers:  
+Keyboard, mouse, disk (IDE/SATA), display (VESA/GPU), audio, network.
+
+Plug & play / PCI scan:  
+Detects devices, matches them to drivers, registers them in a device tree.
+
+
+
+
+
+
+7. Filesystem & storage
+VFS (virtual filesystem):  
+Abstract layer that exposes paths, files, directories, independent of actual FS type.
+
+Filesystem drivers:  
+FAT32, maybe others later; handle on‑disk layout, metadata, clusters, caching.
+
+Buffer cache:  
+Keeps frequently used blocks in RAM to avoid constant disk access.
+
+
+
+
+
+8. IPC & synchronization
+Messages / queues:  
+Simple message passing between tasks (for daemons, services, etc.).
+
+Shared memory:  
+Regions mapped into multiple processes for fast communication.
+
+Locks (mutex/spinlock):  
+Protect shared kernel structures from concurrent access.
+
+
+
+
+
+9. Graphics & 2D engine (if in kernel)
+Display abstraction:  
+Basic API to set mode, clear screen, blit buffers.
+
+2D primitives:  
+Lines, rectangles, sprites, tiles, text rendering.
+
+VRAM management:  
+Tracks framebuffers, texture/tile atlases, and their placement in VRAM.
+
+
+
+
+
+10. Networking & TLS (if in kernel or as modules)
+Socket API:  
+Syscalls for connect, send, recv, close.
+
+Protocol stack:  
+TCP/UDP/IP, ARP, DHCP, etc.
+
+TLS layer:  
+Uses crypto library (e.g., BearSSL) to wrap sockets with secure channels.
+
+
+
+
+
+11. Kernel services & modules
+Module loader:  
+Loads/unloads optional components (2D engine, TLS, desktop, etc.) on demand.
+
+Service registry:  
+Keeps track of active daemons (audio, GF‑Web backend, etc.) and their endpoints.
+
+
+
+
+
+12. Debugging & diagnostics
+Kernel log:  
+Central logging facility (ring buffer) for drivers and core subsystems.
+
+Panic handler:  
+When something fatal happens, prints state, maybe enters a debug shell.
+
+Profiling hooks:  
+Simple counters/timers to measure performance of key paths (scheduler, blitter, syscalls).
+
+----------------------------------------------------------
+
+
+
+
+section 7. dispath
+
+
+Here’s the deep‑dive you asked for, Foisy:
+the syscall dispatch section, but expanded to show how each subsystem plugs into it:
+
+shell
+
+prompt
+
+framebuffer
+
+2D engine
+
+file I/O
+
+network
+
+TLS
+
+GF‑Web
+
+GF‑Lang compiler
+
+daemons
+
+Everything is structured so your kernel can route one syscall ID → one subsystem cleanly.
+
+No code, just architecture — exactly what you need to build the ABI.
+
+🧠 Syscall Dispatch: the real breakdown
+The dispatcher is the traffic cop of your kernel.
+It receives:
+
+syscall ID
+
+arguments
+
+calling process context
+
+Then it routes to the correct subsystem.
+
+Here’s the full map.
+
+🧩 1. Process & Tasking Syscalls
+These control tasks, shells, apps, daemons.
+
+
+
+
+
+task_create — launch .gfb, GF‑Web, compiler, etc.
+
+task_kill — terminate app
+
+task_yield — cooperative multitasking
+
+task_sleep — timers
+
+task_suspend — background mode
+
+task_resume — bring app back
+
+This is how you keep shell + neditor + GF‑Web + compiler alive.
+
+🖥️ 2. Shell & Prompt Syscalls
+The shell is just a userland app, but it needs kernel services:
+
+
+
+
+
+read_line — keyboard input
+
+write_text — print to console
+
+cursor_move — prompt cursor
+
+clear_screen
+
+scroll_region
+
+This is your text mode ABI.
+
+🖼️ 3. Framebuffer Syscalls
+These talk directly to VRAM.
+
+
+
+
+
+fb_set_mode — 640×480, 800×600, etc.
+
+fb_get_info — pitch, bpp, VRAM size
+
+fb_swap_buffers — double buffering
+
+fb_blit — raw blit
+
+fb_fill_rect — clear, UI boxes
+
+This is the lowest level of your graphics stack.
+
+🎨 4. 2D Engine Syscalls
+Your isometric engine lives here.
+
+
+
+
+
+draw_tile — iso tile blit
+
+draw_sprite — characters, objects
+
+draw_text — font atlas
+
+draw_line
+
+draw_rect
+
+load_texture — VRAM atlas
+
+free_texture
+
+This is your game engine ABI.
+
+📁 5. File I/O Syscalls
+FAT32 or whatever FS you choose.
+
+
+
+
+
+file_open
+
+file_read
+
+file_write
+
+file_seek
+
+file_close
+
+dir_list
+
+Used by:
+
+shell
+
+GF‑Web
+
+GF‑Lang compiler
+
+games
+
+daemons
+
+🌐 6. Network Syscalls
+Your GF‑NetStack / BearSSL stack.
+
+
+
+
+
+net_open — open socket
+
+net_send
+
+net_recv
+
+net_close
+
+net_poll
+
+Used by GF‑Web, daemons, update services.
+
+🔐 7. TLS Syscalls
+Only loaded when needed.
+
+
+
+
+
+tls_handshake
+
+tls_send
+
+tls_recv
+
+tls_close
+
+GF‑Web uses these constantly.
+
+🎵 8. Audio Daemon Syscalls
+Your background music engine.
+
+
+
+
+
+audio_open
+
+audio_write — PCM frames
+
+audio_set_volume
+
+audio_close
+
+This daemon stays alive even when switching apps.
+
+🧩 9. Module Loader Syscalls
+Load/unload 2D engine, TLS, desktop, etc.
+
+
+
+
+
+module_load
+
+module_unload
+
+module_query
+
+This is how you keep RAM clean.
+
+🧠 10. Kernel Utility Syscalls
+Used by everything.
+
+get_time
+
+sleep_ms
+
+random
+
+log
+
+🔥 How the dispatcher actually routes everything
+When a user app calls a syscall:
+
+CPU traps into kernel
+
+Kernel saves registers
+
+Dispatcher reads syscall ID
+
+Dispatcher jumps to subsystem table:
+
+Code
+0x00–0x1F → Process/Tasking  
+0x20–0x3F → Shell/Prompt  
+0x40–0x5F → Framebuffer  
+0x60–0x7F → 2D Engine  
+0x80–0x9F → File I/O  
+0xA0–0xBF → Network  
+0xC0–0xDF → TLS  
+0xE0–0xEF → Audio  
+0xF0–0xFF → Modules
+Subsystem executes
+
+Return value placed in register
+
+Kernel restores registers
+
+Return to user mode
+
+------------------------------------------------------------------------------

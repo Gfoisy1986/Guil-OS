@@ -78,7 +78,10 @@ protected_mode:
 
     call clear_keyboard_buffer
     call clear_input_line
+   
+	
 
+    
     ; place cursor after prompt
     mov byte [cursor_row], 24
     mov byte [cursor_col], 0   ; adjust to real prompt length
@@ -87,11 +90,10 @@ protected_mode:
     call read_input_pm           ; read user input on row 24
 
     call newline_pm              ; add newline to scroll area
-    mov esi, input_buffer
-    call print_pm
-    call newline_pm              ; add newline to scroll area
+   
     
     call parse_command           ; execute command
+    call wait_for_enter
     jmp .start_shell
 
 
@@ -116,9 +118,10 @@ parse_command:
     cmp al, 1
     je .handler_help
 
-    ; Check for "-lsss"
+    ; Check for "-ls"
 
     mov esi, input_buffer
+    
     mov edx, cmd_ls_inline
     mov edi, edx
     mov ecx, 3
@@ -132,7 +135,7 @@ parse_command:
     mov esi, input_buffer
     mov edx, cmd_cat_inline
     mov edi, edx
-    mov ecx, 3
+    mov ecx, 4
     call strncmp32
     cmp al, 1
     je .handler_cat
@@ -149,13 +152,13 @@ parse_command:
     jmp .advance_cursor
 
 .handler_ls:
-
-
-    ; Recalculate EDI for top-left of screen
-    mov edi, text_buffer
-
+   
+    
+    
+    
     call newline_pm
-    call print_file_table_pm
+    mov esi, file_table_start
+    call print_pm
     jmp .advance_cursor
 
 .handler_cat:
@@ -194,14 +197,20 @@ parse_command:
 
 
 
+
 wait_for_enter:
 .wait:
-    call get_key_pm        ; AL = caractère ou 0 si rien
-    test al, al
-    jz .wait               ; rien reçu → attendre
+    call get_key_pm              ; AL = ASCII, BL = scancode
+    test bl, bl
+    jz .wait
 
-    cmp al, 0x1C            ; ASCII Enter = 0x1C 
-    je .wait
+    ; ----------------------------
+    ; ENTER
+    ; ----------------------------
+    cmp bl, 0x1C
+    je .enter
+    
+.enter:
 
     ret
 
@@ -733,16 +742,25 @@ set_cursor_pm:
 
 
 Clear_screen:
+    ; Clear VRAM
     mov edi, 0xB8000
     mov ax, 0x0720
     mov ecx, 80 * 25
     rep stosw
 
+    ; Clear logical buffer
+    mov edi, text_buffer
+    mov ax, 0x0720
+    mov ecx, 80 * 25
+    rep stosw
+
+    ; Reset state
     mov byte [cursor_col], 0
     mov word [logical_cursor_row], 0
-    mov word [scroll_offset], 0      ; ← important
+    mov word [scroll_offset], 0
     mov byte [screen_dirty], 1
-    call redraw_screen               ; keep model consistent
+
+    call redraw_screen
     ret
 
 redraw_screen:
