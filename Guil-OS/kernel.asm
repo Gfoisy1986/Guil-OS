@@ -2,7 +2,7 @@
 
 [BITS 16]
 global protected_mode
-
+db 'GOS!'        ; 4-byte Guil-OS signature
 start:
     ; Print initial messages
     mov si, message
