@@ -1,0 +1,258 @@
+planning  --> :
+
+
+1. Boot path on USB flash drive
+1.1. Stage‑1 bootloader (MBR, 16‑bit real mode)
+Goal: Minimal 512‑byte sector that just loads stage‑2.
+
+Tasks:
+
+Boot sector:
+
+Signature 0x55AA, keep DL (boot drive), set up tiny stack.
+
+Disk I/O (USB mass storage via BIOS):
+
+Use INT 13h LBA reads; don’t fight USB yet—BIOS abstracts it.
+
+Load stage‑2:
+
+Decide fixed LBA range for stage‑2 (e.g. sectors 1–N).
+
+Read into a known physical address (e.g. 0x0000:0x8000).
+
+1.2. Stage‑2 bootloader (still real mode, bigger)
+Goal: Hardware discovery + mode switch prep + kernel load.
+
+Tasks:
+
+Enable A20:
+
+Fast A20 or INT 15h method; verify >1 MB access.
+
+Memory map:
+
+Use INT 15h, E820 to build a simple region list.
+
+GDT for protected mode:
+
+Flat 4 GB code/data segments; store descriptor table in low memory.
+
+Disk loader for kernel image:
+
+Read kernel file as a raw binary (later FAT32 will replace this).
+
+Load at a high physical address (e.g. 0x00100000).
+
+2. FAT32 preparation on USB
+2.1. Minimal FAT32 reader in stage‑2
+Goal: Load /BOOT/KERNEL.BIN from a FAT32 volume on USB.
+
+Tasks:
+
+Parse BPB:
+
+Read sector 0 of partition; extract bytes/sector, sectors/cluster, FAT start, root dir cluster.
+
+Cluster chain traversal:
+
+Implement read_cluster, next_cluster using FAT32 entries.
+
+Path resolution:
+
+Simple path walker: split "BOOT/KERNEL.BIN", walk directories.
+
+File loader:
+
+Read all clusters of the file into kernel load address.
+
+At this stage, you’re still using BIOS INT 13h for sector reads; FAT32 is just a layer on top.
+
+3. Transition: real mode → 32‑bit protected mode → 64‑bit long mode
+3.1. Enter 32‑bit protected mode
+Goal: Clean 32‑bit environment to set up paging for long mode.
+
+Tasks:
+
+Load GDT:
+
+lgdt with your flat segments.
+
+Set CR0.PE:
+
+Flip to protected mode, far jump to 32‑bit code segment.
+
+Basic 32‑bit runtime:
+
+Set up stack, clear BSS, simple memcpy/memset.
+
+3.2. Build paging structures for long mode
+Goal: Identity‑map early memory + map kernel region.
+
+Tasks:
+
+Page tables:
+
+PML4 → PDPT → PD → PT; identity map at least first 1–2 GiB.
+
+Map kernel physical region to a chosen virtual base (e.g. 0xFFFFFFFF80000000).
+
+Enable PAE + long mode:
+
+Set CR4.PAE, load CR3 with PML4, set EFER.LME via MSR.
+
+Set CR0.PG to enable paging.
+
+3.3. Jump to 64‑bit kernel entry
+Goal: Transfer control to _start64 in guil‑os kernel.
+
+Tasks:
+
+Far jump:
+
+Long‑mode code segment selector + 64‑bit entry address.
+
+ABI contract:
+
+Define calling convention: which registers carry boot info (e.g. memory map pointer, kernel base, etc.).
+
+4. Kernel structure separation (x64 rewrite)
+Think of guil‑os kernel as clean modules, not a blob:
+
+4.1. Core kernel (arch/x86_64)
+Goal: Architecture‑specific spine.
+
+Modules:
+
+CPU init: GDT, IDT, TSS, syscall entry (later).
+
+Interrupts:
+
+Exception handlers, IRQ stubs, PIC/APIC setup.
+
+Timer:
+
+PIT or HPET driver feeding scheduler ticks.
+
+Low‑level MM:
+
+Physical allocator, virtual memory manager, kalloc/kfree.
+
+4.2. Kernel services
+Goal: OS‑level primitives above arch layer.
+
+Modules:
+
+Scheduler:
+
+Ready queues, context switch, basic priorities.
+
+Start with cooperative tasks, then preemptive using timer IRQ.
+
+IPC / syscalls (later):
+
+Minimal syscall table for shell and GF‑Lang runtime.
+
+5. TTY, prompt, shell, scroll
+5.1. Text output driver
+Goal: Abstract VGA text / framebuffer into a TTY API.
+
+Tasks:
+
+TTY device:
+
+tty_write, tty_set_cursor, tty_clear.
+
+Backed by VGA text mode or your 2D engine.
+
+Scroll logic:
+
+Maintain a line buffer; when cursor hits bottom, scroll up one line and redraw.
+
+5.2. Input driver
+Goal: Keyboard → key events → shell.
+
+Tasks:
+
+Keyboard IRQ handler:
+
+Translate scancodes, handle modifiers, push into a ring buffer.
+
+Line editor (prompt):
+
+Maintain current input line, cursor position, history list.
+
+Support backspace, left/right, up/down for history.
+
+5.3. Shell process
+Goal: User‑facing command interpreter running on top of kernel.
+
+Tasks:
+
+Command table:
+
+Built‑ins: help, ls, cat, meminfo, ps, gf-lang, etc.
+
+Execution model:
+
+For now, shell can call kernel services directly (no full user/kernel split yet).
+
+Later, move to user‑space task with syscalls.
+
+6. Scheduler → GF‑Lang compiler integration
+6.1. Process/task abstraction
+Goal: Run GF‑Lang compiler as a scheduled task.
+
+Tasks:
+
+Task struct:
+
+Registers, stack pointer, state, PID, parent, etc.
+
+Context switch:
+
+Save/restore general registers + RSP, RIP, segment selectors.
+
+Syscalls for runtime:
+
+write, read, open, close, malloc/free or arena allocator.
+
+6.2. GF‑Lang compiler as a user‑space program
+Goal: Treat GF‑Lang as a first “real” program on guil‑os.
+
+Tasks:
+
+Binary format:
+
+Start with a simple flat binary loader: load code + data, set entry point.
+
+Runtime support:
+
+Provide minimal libc‑like layer (I/O, memory) for GF‑Lang.
+
+Shell integration:
+
+gf-lang file.gf spawns a task running the compiler, outputs to TTY or file.
+
+7. Suggested build order (checklist style)
+Stage‑1 bootloader (USB via BIOS, raw sectors).
+
+Stage‑2 loader (A20, E820, GDT, raw kernel load).
+
+FAT32 reader (load KERNEL.BIN from USB).
+
+Protected mode entry (32‑bit), basic runtime.
+
+Paging + long mode switch, _start64 entry.
+
+Arch/x86_64 core: IDT, IRQ, timer, MM.
+
+Kernel services: scheduler, basic syscalls.
+
+TTY + keyboard + prompt line editor + scroll.
+
+Shell with built‑in commands.
+
+Task abstraction + flat binary loader.
+
+GF‑Lang compiler port + shell command to run it.
