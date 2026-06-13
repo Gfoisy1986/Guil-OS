@@ -1,14 +1,14 @@
 # **Guil‑OS — A Minimalist, Modular, Bare‑Metal x86 Operating System**
 
-Guil‑OS is a lightweight, modular, and fully hand‑crafted operating system designed for retro x86 hardware.  
-It focuses on **clarity**, **maintainability**, and **hardware longevity**, offering a clean architecture that avoids bloat and embraces simplicity.
-
-This project is both a technical playground and a manifesto for **ethical, ecological computing**:  
-reviving old machines, reducing e‑waste, and proving that elegant software can run on modest hardware.
+Guil‑OS is a lightweight, modular, and fully hand‑crafted operating system designed for retro x86_64 hardware.  
 
 ---
 
 ## 🚀 **Features**
+
+
+### ** Brand new Bootloader**
+- Now scan if Guil-OS is present on drive...
 
 ### **🧠 Protected Mode Kernel**
 - Custom GDT  
@@ -38,14 +38,9 @@ reviving old machines, reducing e‑waste, and proving that elegant software can
 - Clear separation of kernel, drivers, and userland  
 - Minimal dependencies  
 - Clean, readable assembly  
-- Designed for future scripting integration (Lua, Perl, Tcl)  
+- Designed for future scripting integration (GF-Lang)
 
-### **🕹️ Retro Hardware Friendly**
-- Designed to run on:
-  - Pentium / 486 / 386  
-  - Laptops with PCMCIA  
-  - ISA/PCI network cards (RTL8139, NE2000, 3Com 3C562 planned)  
-- Boots from BIOS with no external OS  
+
 
 ---
 
@@ -78,14 +73,17 @@ Flash to USB or floppy image and boot directly.
 - Add TTY switching (Alt+F1/F2/F3)  
 - Improve shell input  
 - Add timer‑based features  
+- Scheduler
+- File I/O
+- Drivers..._
+- Retrofacto Kernel
 
 ### **Long‑Term**
 - Full network stack (GF‑NetStack)  
-- PCMCIA support (3Com 3C562)  
-- Wi‑Fi support (Linksys WPC11 v4, RTL8180L)  
-- Minimal POSIX‑like API  
-- Lua/Perl scripting engine  
+- GF-Lang scripting + compiler
 - Graphical terminal  
+- Mobile light web browser
+- Isometric 2D engine
 - Lightweight window system  
 
 ---
