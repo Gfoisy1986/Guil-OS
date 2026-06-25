@@ -1,6 +1,0 @@
-elie|123
-gui|124
-hello|125
-humm|126
-
-

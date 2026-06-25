@@ -1,79 +1,48 @@
 #!/bin/bash
+set -e
 
-# --- Config ---
 SECTOR_SIZE=512
-START_SECTOR=123
 IMG=os.img
+BOOTLOADER=bootloader.bin
+KERNEL=kernel.bin
+FILE_DIR=file
 FILE_TABLE=file_table.txt
 DATA_ASM=asm/data.asm
-FILE_DIR=file
+KERNEL_SIZE_INC=asm/kernel_size.inc
 
-# --- Generate data.asm with file_table_start ---
-echo "🧠 Generating $DATA_ASM with file_table_start..."
 
-{
-    echo "section .data"
-    echo "align 512"
-    echo ""
-    echo "file_table_start:"
-} > "$DATA_ASM"
 
-sector=$START_SECTOR
 
-for file in "$FILE_DIR"/*; do
-    [ -f "$file" ] || continue
-    filename=$(basename "$file")
-    filesize=$(stat -c%s "$file")
-    sectors=$(( (filesize + SECTOR_SIZE - 1) / SECTOR_SIZE ))
 
-    echo "    db \"${filename}|${sector}\", 0x0A" >> "$DATA_ASM"
-    sector=$((sector + sectors))
-done
+rm -f "$IMG" "$BOOTLOADER" "$KERNEL"
 
-echo "    db 0" >> "$DATA_ASM"
-echo "" >> "$DATA_ASM"
-echo "✅ $DATA_ASM updated successfully."
 
-# --- Clean previous build ---
-rm -f "$IMG" "$FILE_TABLE"
+nasm -f bin -o "$KERNEL" kernel.asm
 
-# --- Assemble bootloader and kernel ---
+
+
+# --- Compute kernel sectors and export to kernel_size.inc ---
+
+
+
+
+
+nasm -f bin -o "$BOOTLOADER" bootloader.asm
 echo "🔧 Assembling bootloader and kernel..."
-nasm -f bin -o bootloader.bin bootloader.asm || exit 1
-nasm -f bin -o kernel.bin kernel.asm || exit 1
 
-# --- Create blank image ---
+
+
+
+
 echo "📦 Creating blank image..."
-dd if=/dev/zero of="$IMG" bs=$SECTOR_SIZE count=300
+dd if=/dev/zero of="$IMG" bs=$SECTOR_SIZE count=300 status=none
 
-# --- Embed bootloader ---
-echo "🚀 Embedding bootloader..."
-dd if=bootloader.bin of="$IMG" bs=$SECTOR_SIZE count=1 conv=notrunc
+echo "🚀 Embedding bootloader at LBA 0..."
+dd if="$BOOTLOADER" of="$IMG" bs=$SECTOR_SIZE count=1 conv=notrunc status=none
 
-# --- Embed kernel ---
-echo "🧠 Embedding kernel..."
-dd if=kernel.bin of="$IMG" bs=$SECTOR_SIZE seek=1 conv=notrunc
+echo "🧠 Embedding kernel at LBA 1..."
+dd if="$KERNEL" of="$IMG" bs=$SECTOR_SIZE seek=1 conv=notrunc status=none
 
-# --- Embed files and generate file_table.txt ---
-echo "📁 Embedding files from $FILE_DIR..."
-sector=$START_SECTOR
 
-for file in "$FILE_DIR"/*; do
-    [ -f "$file" ] || continue
-    filename=$(basename "$file")
-    filesize=$(stat -c%s "$file")
-    sectors=$(( (filesize + SECTOR_SIZE - 1) / SECTOR_SIZE ))
 
-    echo "✅ $filename → sector $sector ($sectors sectors)"
-    dd if="$file" of="$IMG" bs=$SECTOR_SIZE seek=$sector conv=notrunc
-
-    echo "$filename|$sector" >> "$FILE_TABLE"
-    sector=$((sector + sectors))
-done
-
-# --- Embed file_table.txt at sector 121 ---
-echo "📝 Embedding $FILE_TABLE at sector 121..."
-echo -e "\n" >> "$FILE_TABLE"
-dd if="$FILE_TABLE" of="$IMG" bs=$SECTOR_SIZE seek=121 conv=notrunc
-
-echo "🎉 Build complete: $IMG"
+echo 

@@ -1,0 +1,150 @@
+Tu touches à un vrai tournant là—on n’est plus dans “ça boote”, on est dans “je construis une vraie stack moderne”. On va poser une **roadmap claire**, basée sur **ton bootloader actuel** (16‑bit BIOS + LBA) et **ton kernel** (16→32→64 bits, IDT, PIC, paging).
+
+Je te fais ça en étapes concrètes, que tu peux cocher une par une.
+
+---
+
+## 1. Clarifier le layout du disque et de `os.img`
+
+**Objectif:** que tu saches *exactement* ce qu’il y a à chaque LBA.
+
+**Layout minimal à viser à terme :**
+
+- **LBA 0**  
+  **MBR / BIOS boot sector**  
+  - Code 16‑bit (ton bootloader actuel, adapté)  
+  - Signature `0x55AA`  
+  - Table de partitions (MBR classique)  
+- **LBA 1**  
+  Soit :
+  - un **VBR FAT32** (si tu bootes via un volume FAT32),  
+  soit :
+  - un **stage2 loader** custom (ton loader LBA actuel, plus gros que 512B)
+- **Partition FAT32**  
+  - Contient : `KERNEL.BIN`, fichiers, etc.
+
+**Important :**
+
+- Le fait d’utiliser **LBA** ne change pas la structure de `os.img`.  
+  Ça change seulement *comment* tu lis les secteurs (INT 13h AH=42h au lieu de CHS).
+- Si tu écris `bootloader.bin` à LBA 0 et `kernel.bin` à LBA 1, tu es déjà cohérent.  
+  Le problème vient surtout de la taille du kernel et du padding, pas de LBA.
+
+---
+
+## 2. Stabiliser la chaîne BIOS → LBA → kernel 64‑bit
+
+Tu as déjà :
+
+- Bootloader 16‑bit en 0x7C00 (BIOS)
+- Lecture LBA du kernel vers 0x20000
+- Jump far vers `0x2000:0000`
+- Kernel : 16‑bit → 32‑bit → 64‑bit, avec GDT, IDT, PIC, paging
+
+**Roadmap immédiate côté BIOS :**
+
+1. **Fixer le protocole de chargement du kernel :**
+   - Kernel toujours chargé à `0x20000`
+   - Kernel toujours `[org 0x20000]`
+   - Bootloader lit `N` secteurs à partir de `KERNEL_LBA` (souvent 1)
+2. **Arrêter de padd-er à la main dans le kernel**  
+   - Laisser `kernel.bin` à sa taille naturelle  
+   - Calculer `N` secteurs dans le script de build  
+   - Mettre `dap_sectors = N` dans le bootloader (via `-D` ou un include généré)
+3. **Vérifier la chaîne complète :**
+   - `os.img` = `bootloader` à LBA 0 + `kernel` à LBA 1  
+   - QEMU : `-drive format=raw,file=os.img`  
+   - Le kernel arrive bien en 64‑bit et boucle sur `start_shell64`.
+
+Une fois ça **solide**, tu touches au reste.
+
+---
+
+## 3. Introduire proprement FAT32 (toujours côté BIOS)
+
+**But:** ne plus charger le kernel par “secteurs magiques”, mais par **nom de fichier** sur une partition FAT32.
+
+### Étapes :
+
+1. **Créer une vraie partition FAT32 dans `os.img`**
+   - MBR à LBA 0  
+   - Partition FAT32 commençant à LBA 2048 par exemple  
+   - Formater en FAT32 (`mkfs.fat` ou `mkfs.vfat`)
+2. **Adapter ton bootloader BIOS :**
+   - Stage1 (512B) en LBA 0 :  
+     - charge un **stage2** plus gros (quelques secteurs)  
+   - Stage2 :  
+     - implémente un mini driver FAT32 en 16‑bit ou 32‑bit  
+     - trouve `KERNEL.BIN` dans la FAT  
+     - lit ses clusters → secteurs → RAM (0x20000)  
+3. **Adapter ton kernel :**
+   - Il ne dépend plus d’un offset LBA fixe  
+   - Il est juste un fichier sur FAT32
+
+Tu peux réutiliser ton code LBA actuel pour lire les secteurs FAT32.
+
+---
+
+## 4. Préparer le chemin UEFI en parallèle
+
+UEFI ne boote pas comme BIOS :
+
+- Pas de 0x7C00, pas de real mode, pas d INT 13h
+- UEFI charge un **fichier PE/COFF** (ex: `BOOTX64.EFI`) depuis une partition **EFI System (FAT32)** et lui passe la main en 64‑bit.
+
+**Roadmap UEFI :**
+
+1. **Ajouter une partition EFI System (FAT32)** dans `os.img`
+   - Contient : `\EFI\BOOT\BOOTX64.EFI`
+2. **Écrire un petit loader UEFI en C ou en ASM 64‑bit :**
+   - Point d’entrée UEFI (EFIAPI)  
+   - Utilise les services UEFI pour :
+     - ouvrir `KERNEL.BIN` sur la partition  
+     - l’allouer en mémoire  
+     - sauter à son entry point (déjà 64‑bit)
+3. **Adapter ton kernel pour être bootable aussi via UEFI :**
+   - Entrée 64‑bit directe (tu l’as déjà avec `long_mode_entry`)  
+   - Pas d’héritage de GDT/IDT BIOS → tu dois les initialiser toi‑même (ce que tu fais déjà)
+
+Tu peux garder **le même kernel** pour BIOS et UEFI, tant que :
+
+- BIOS loader : prépare long mode, puis jump à `long_mode_entry`
+- UEFI loader : est déjà en long mode, mappe la mémoire, puis jump à `long_mode_entry` ou un autre entry point 64‑bit.
+
+---
+
+## 5. Unifier : “bootloader multi‑chemin” (BIOS + UEFI)
+
+À terme, tu peux viser :
+
+- **Un seul `os.img`** avec :
+  - MBR + partition FAT32 (BIOS boot)
+  - Partition EFI System (UEFI boot)
+- **Deux loaders :**
+  - `bootsector + stage2` pour BIOS (ton code actuel, enrichi FAT32)
+  - `BOOTX64.EFI` pour UEFI
+- **Un seul kernel 64‑bit**, commun aux deux chemins.
+
+---
+
+## 6. Ce que je te conseille de faire maintenant, très concret
+
+1. **Stabiliser BIOS + LBA + kernel 64‑bit sans FAT32 :**
+   - Enlève le padding dans le kernel  
+   - Calcule `dap_sectors` dans le script  
+   - Vérifie que `os.img` = LBA0 bootloader + LBA1 kernel  
+   - Assure‑toi que ton kernel arrive toujours à `long_mode_entry` sans crash
+2. **Ensuite seulement, introduire FAT32 côté BIOS :**
+   - MBR + partition FAT32  
+   - Stage2 qui lit `KERNEL.BIN` depuis FAT32
+3. **En parallèle, commencer un mini loader UEFI** (même si au début il fait juste `Print(L"Hello")`).
+
+---
+
+Si tu veux, au prochain message, on peut :
+
+- soit détailler **le script de build `os.img`** propre (MBR + kernel LBA1)  
+- soit dessiner **le layout exact des partitions** pour BIOS+UEFI+FAT32  
+- soit écrire **un plan précis pour ton stage2 FAT32** basé sur ton style ASM actuel.
+
+Dis‑moi lequel tu veux attaquer en premier.

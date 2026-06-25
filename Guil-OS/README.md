@@ -61,7 +61,8 @@ sudo apt install qemu-system-x86
 ```
 
 ```bash
-/usr/bin/qemu-system-i386 -vga std -drive format=raw,file=os.img
+qemu-system-x86_64 -vga std -drive format=raw,file=os.img -d int -no-reboot -no-shutdown
+
 ```
 
 ## 🔧 Execute & Builds Image on ming-w64 win-11 64 bits...
@@ -75,7 +76,8 @@ cd ~/Guil-OS/Guil-OS/x86/32BITS/Devel/V0.1-Devel
 ```
 
 ```bash
-qemu-system-i386 -vga std -drive format=raw,file=os.img
+qemu-system-x86_64 -vga std -drive format=raw,file=os.img -d int -no-reboot -no-shutdown
+
 ```
 
 ### En Devel... (TO DO)
