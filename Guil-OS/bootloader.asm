@@ -1,5 +1,18 @@
 [org 0x7C00]
 
+<<<<<<< Updated upstream
+=======
+KERNEL_LOAD_SEG equ 0x0900
+KERNEL_LOAD_OFF equ 0x0000
+KERNEL_LBA      equ 1          ; kernel starts at LBA 1 (seek=1 in build script)
+
+
+
+; ------------------------------------------------------------
+; Entry
+; ------------------------------------------------------------
+start:
+>>>>>>> Stashed changes
     cli
     xor ax, ax
     mov ds, ax
@@ -42,16 +55,42 @@ next_disk:
     int 0x13
     jc .try_next               ; read failed → next disk
 
+<<<<<<< Updated upstream
     ; Check signature at start of sector
     cmp dword [0x8000], 'GOS!' ; your Guil-OS signature
     jne .try_next
 
+=======
+    ; --------------------------------------------------------
+    ; Read 1 sector at KERNEL_LBA into 0x0000:0x8000
+    ; to check 'GOS!' signature
+    ; --------------------------------------------------------
+    mov word [dap_sectors], 1
+    mov word [dap_offset], KERNEL_LOAD_OFF   ; 0x0000
+	mov word [dap_segment], KERNEL_LOAD_SEG  ; 0x1000
+    mov dword [dap_lba], KERNEL_LBA
+    mov dword [dap_lba+4], 0
+
+    mov si, dap
+    mov ah, 0x42
+    int 0x13
+    jc .try_next
+
+    ; Check signature
+    mov ax, KERNEL_LOAD_SEG
+	mov ds, ax
+	cmp dword [0x9000], 'GOS!'
+    jne .try_next
+   ; mov si, found
+   ; call print
+>>>>>>> Stashed changes
     jmp load_kernel            ; FOUND VALID DISK
 
 .try_next:
     inc si
     jmp next_disk
 
+<<<<<<< Updated upstream
 
 
 ; ============================================================
@@ -69,6 +108,24 @@ load_kernel:
 
     cli
     jmp 0x0000:0x8000          ; jump to kernel
+=======
+; ------------------------------------------------------------
+; Load full kernel using LBA
+; ------------------------------------------------------------
+load_kernel:
+	mov word [dap_sectors], 238
+    mov word [dap_offset], KERNEL_LOAD_OFF   ; 0x0000
+	mov word [dap_segment], KERNEL_LOAD_SEG  ; 0x1000
+    mov dword [dap_lba], KERNEL_LBA
+    mov dword [dap_lba+4], 0
+
+    mov si, dap
+    mov ah, 0x42
+    int 0x13
+
+	cli
+	jmp KERNEL_LOAD_SEG:KERNEL_LOAD_OFF
+>>>>>>> Stashed changes
 
 
 

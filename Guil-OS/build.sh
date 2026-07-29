@@ -30,6 +30,7 @@ for file in "$FILE_DIR"/*; do
     sector=$((sector + sectors))
 done
 
+<<<<<<< Updated upstream
 echo "    db 0" >> "$DATA_ASM"
 echo "" >> "$DATA_ASM"
 echo "✅ $DATA_ASM updated successfully."
@@ -41,6 +42,21 @@ rm -f "$IMG" "$FILE_TABLE"
 echo "🔧 Assembling bootloader and kernel..."
 nasm -f bin -o bootloader.bin bootloader.asm || exit 1
 nasm -f bin -o kernel.bin kernel.asm || exit 1
+=======
+echo "🔧 Assembling bootloader and kernel..."
+nasm -f bin -o "$KERNEL" kernel.asm
+
+
+
+# --- Compute kernel sectors and export to kernel_size.inc ---
+
+
+
+
+
+nasm -f bin -o "$BOOTLOADER" bootloader.asm
+
+>>>>>>> Stashed changes
 
 # --- Create blank image ---
 echo "📦 Creating blank image..."
